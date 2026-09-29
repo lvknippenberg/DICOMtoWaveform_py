@@ -1,0 +1,2250 @@
+Below is a plan I would give directly to Claude Code. I have deliberately framed it as a **benchmarking/implementation project**, rather than assuming one algorithm is universally best. The key constraint is that your input is a **single rendered DICOM image**, so methods that require the original Doppler IQ/audio signal should be excluded or adapted to operate on the image.
+
+The literature supports testing both classical integrated-power-spectrum methods and 2-D image-processing methods. In particular, Kathpalia et al. developed an adaptive SNSI/GM-derived method with adaptive noise estimation, while Latham et al. demonstrated a spectrogram-image method specifically aimed at noisy Doppler data. ([PubMed][1]) The systematic comparison by Sulas et al. is also useful because it decomposes envelope tracing into preprocessing, binarization, post-processing, extraction and envelope post-processing. ([PubMed Central (PMC)][2])
+
+You can use this working folder @C:\Claude and use this Python environment @C:\Users\p70096100\AppData\Local\miniconda3\envs\DopplerUS. This working folder and Python environment can also be used for future sessions. 
+
+
+# Implementation plan: robust Doppler envelope detection from single-frame DICOM images
+
+## 0. Project objective
+
+Implement and benchmark a collection of **non-deep-learning Doppler envelope detectors** for cardiac ultrasound DICOM images.
+
+The system must:
+
+1. Accept a **single-frame DICOM image**.
+2. Automatically identify and isolate the Doppler spectral region.
+3. Support both:
+
+   * conventional spectral Doppler / PW or CW Doppler;
+   * tissue Doppler / TDI.
+4. Preferably use a **common envelope-extraction framework** for both.
+5. Produce:
+
+   * positive/upper envelope;
+   * negative/lower envelope where present;
+   * optionally a signed envelope;
+   * confidence/quality measures.
+6. Be robust to substantial variation in SNR.
+7. Be evaluated against manually annotated reference envelopes supplied by the user.
+8. Make the individual algorithmic stages configurable so that the experiment can determine which components matter.
+9. **Do not use deep learning.**
+10. Keep the implementation reproducible and interpretable.
+
+The primary hypothesis to test is:
+
+> **For rendered single-frame DICOM images, a 2-D image-based method combining adaptive intensity normalization, robust binarization, morphological cleanup, connected-component analysis and constrained boundary tracking will be more robust across SNR than purely spectrum-by-spectrum maximum-frequency estimators.**
+
+A secondary hypothesis is:
+
+> **At high SNR, classical integrated-power-spectrum methods such as GM/MGM/SNSI/QIA will perform competitively or better, while at low SNR a spatial-temporal image method will provide a more stable envelope.**
+
+A third hypothesis is:
+
+> **The optimal detector may differ less between spectral Doppler and tissue Doppler than expected if the algorithm is formulated as generic detection of a Doppler-energy region followed by extraction of its outer boundary, but parameter settings—especially smoothing, thresholding and expected slope/velocity constraints—will likely need to differ.**
+
+---
+
+# 1. Important input constraint
+
+The input is **a single rendered DICOM frame**, not raw ultrasound data.
+
+This distinction is critical.
+
+Do **not** assume access to:
+
+* IQ data;
+* RF data;
+* Doppler audio;
+* complex baseband data;
+* original FFT bins;
+* ultrasound-system noise estimates;
+* acquisition-time SNR;
+* PRF metadata unless actually present in the DICOM.
+
+Therefore, algorithms in the literature that operate directly on the Doppler power spectrum should be implemented as **image-domain approximations** where possible.
+
+The implementation should explicitly distinguish:
+
+### Class A — spectrum-derived methods
+
+Methods that can be reconstructed approximately from each vertical image column if pixel intensity is proportional/monotonic with Doppler power.
+
+### Class B — image-domain methods
+
+Methods designed to operate directly on a rendered spectrogram.
+
+Class B is likely to be more appropriate for the final application.
+
+---
+
+# 2. DICOM preprocessing
+
+Create a dedicated module:
+
+```text
+doppler_envelope/
+    dicom.py
+    preprocessing.py
+    coordinate_system.py
+    segmentation.py
+    estimators/
+    evaluation/
+    visualization/
+    experiments/
+```
+
+Implement:
+
+```python
+load_dicom()
+extract_pixel_array()
+extract_metadata()
+normalize_image()
+```
+
+## 2.1 DICOM handling
+
+Read:
+
+* Rows
+* Columns
+* Photometric Interpretation
+* Bits Stored
+* Bits Allocated
+* Rescale Slope
+* Rescale Intercept
+* Window Center/Width
+* Pixel Spacing
+* Frame Time
+* Cine Rate
+* Doppler-related private tags where available
+
+Do not assume any particular DICOM tag exists.
+
+Record all available metadata.
+
+Do not apply arbitrary windowing before envelope detection unless explicitly requested.
+
+Keep at least two image representations:
+
+```text
+raw_pixel
+normalized_float
+```
+
+and possibly:
+
+```text
+display_like_image
+```
+
+for visualization.
+
+---
+
+# 3. Identify the Doppler plot region
+
+This is one of the most important practical stages.
+
+The image may contain:
+
+* patient/measurement annotations;
+* ECG;
+* grayscale B-mode;
+* color Doppler;
+* spectral Doppler;
+* TDI;
+* velocity scale;
+* time scale;
+* cursors;
+* labels;
+* gain indicators.
+
+The detector should operate on the **spectral plot ROI**, not the whole DICOM.
+
+Initially implement ROI selection in two ways:
+
+### Mode A — manual ROI
+
+For development:
+
+```python
+roi = select_roi(image)
+```
+
+This provides a reliable baseline and allows algorithm development without conflating ROI detection with envelope detection.
+
+### Mode B — automatic ROI
+
+Later implement heuristic detection based on:
+
+* large rectangular dark/background regions;
+* horizontal/vertical axis structures;
+* spectral-energy distribution;
+* aspect ratio;
+* connected text exclusion.
+
+Do not make automatic ROI detection part of the initial benchmark unless the supplied data require it.
+
+---
+
+# 4. Coordinate normalization
+
+The image coordinate system must be converted to a physically meaningful coordinate system.
+
+For the envelope algorithm, initially use normalized coordinates:
+
+$$
+x \in [0,1]
+$$
+
+and
+
+$$
+y \in [-1,1]
+$$
+
+where \(y=0\) corresponds to the Doppler baseline.
+
+Determine the baseline automatically if possible.
+
+Potential methods:
+
+### Method 1: explicit axis detection
+
+Find a strong horizontal line.
+
+### Method 2: symmetry
+
+For spectral Doppler, estimate the baseline as the horizontal coordinate around which positive and negative Doppler distributions are organized.
+
+### Method 3: metadata/cursor
+
+Use the displayed zero-velocity axis if identifiable.
+
+### Method 4: manual initialization
+
+For initial experiments, allow manual baseline annotation.
+
+**Do not assume the image center is the zero-velocity line.**
+
+This is particularly important for tissue Doppler, where the baseline and positive/negative velocity regions may have very different signal strengths.
+
+---
+
+# 5. Important distinction: spectral Doppler vs tissue Doppler
+
+The implementation should not create two completely separate algorithms.
+
+Instead define a common abstraction:
+
+```python
+DopplerEnvelopeDetector.detect(
+    image,
+    baseline,
+    polarity="both"
+)
+```
+
+Internally:
+
+```text
+image
+  ↓
+normalization
+  ↓
+noise/background estimation
+  ↓
+Doppler-energy likelihood image
+  ↓
+candidate Doppler region
+  ↓
+boundary extraction
+  ↓
+temporal/spatial regularization
+  ↓
+envelope
+```
+
+This architecture is applicable to both spectral and tissue Doppler.
+
+However, expose configuration parameters:
+
+```python
+mode = "spectral"
+mode = "tissue"
+```
+
+because TDI commonly has:
+
+* lower velocities;
+* narrower spectral distributions;
+* stronger/very different background;
+* bidirectional motion;
+* different morphology.
+
+The purpose of the benchmark is to determine how much these differences actually matter.
+
+---
+
+# 6. Estimator 1 — simple fixed threshold
+
+Implement this first as the baseline.
+
+For each column \(x\):
+
+1. normalize intensity;
+2. determine threshold \(T\);
+3. find the highest \(y\) satisfying
+
+$$
+I(x,y)>T.
+$$
+
+For bidirectional Doppler, independently find:
+
+$$
+y_\mathrm{upper}(x)
+$$
+
+and
+
+$$
+y_\mathrm{lower}(x).
+$$
+
+### Variants
+
+Test:
+
+```text
+global threshold
+percentile threshold
+threshold relative to image maximum
+threshold relative to local column maximum
+```
+
+Example:
+
+$$
+T = P_{q}(I)
+$$
+
+where \(P_q\) is an image-intensity percentile.
+
+### Why include it?
+
+Not because it is expected to win.
+
+It establishes:
+
+* how difficult the problem is;
+* how much SNR variation affects the result;
+* whether sophisticated methods are actually needed.
+
+---
+
+# 7. Estimator 2 — Otsu thresholding
+
+Implement:
+
+### Global Otsu
+
+Find threshold \(T\) maximizing between-class variance.
+
+Then:
+
+```text
+image
+ → Otsu
+ → binary mask
+ → morphology
+ → boundary
+```
+
+This is particularly relevant because Otsu-based methods have been used for Doppler envelope extraction, including the Latham work and related image-processing literature. Latham's published method is based on an Otsu/morphological approach to Doppler spectrogram images. ([PubMed][3])
+
+### Variants
+
+Test:
+
+* global Otsu;
+* Otsu after Gaussian smoothing;
+* Otsu after background subtraction.
+
+Do not initially use adaptive/local Otsu unless the global version is clearly inadequate.
+
+---
+
+# 8. Estimator 3 — percentile / integrated-power method
+
+Implement a spectrum-style estimator using each image column.
+
+Treat grayscale intensity as a proxy for spectral power:
+
+$$
+P_x(y)=I(x,y).
+$$
+
+For each column, calculate cumulative power:
+
+$$
+C_x(y)=
+\frac{\sum_{k \leq y}P_x(k)}
+{\sum_k P_x(k)}.
+$$
+
+Estimate the envelope as the \(p\)-percentile point.
+
+Test:
+
+```text
+p = 90%
+p = 95%
+p = 97%
+p = 98%
+p = 99%
+```
+
+Do not assume that one percentile is optimal.
+
+The purpose of the experiment is to determine:
+
+$$
+p^* = \arg\min_p E(\hat e_p,e_\mathrm{ref}).
+$$
+
+Important:
+
+The percentile should be optimized **only on training/development images**, not on the final test set.
+
+---
+
+# 9. Estimator 4 — Geometric Method (GM)
+
+Implement the classical **Geometric Method**.
+
+Reference:
+
+Kathpalia et al. describe GM as one of the established approaches and combine a modified form of it with SNSI. ([PubMed][1])
+
+For each spectrum:
+
+1. calculate integrated power;
+2. normalize cumulative power;
+3. construct the characteristic geometric reference;
+4. find the point of maximum deviation;
+5. map that point to the maximum frequency.
+
+The exact implementation should follow the published definition rather than inventing a new geometric criterion.
+
+Add diagnostics showing:
+
+```text
+original spectrum
+integrated spectrum
+reference geometry
+detected envelope
+```
+
+This is essential because GM can fail in recognizable ways.
+
+Li et al. report that GM/MGM performance depends on whether the integrated power spectrum resembles the assumed characteristic shape and that GM/MGM can overestimate maximum velocity. ([MDPI][4])
+
+---
+
+# 10. Estimator 5 — Modified Geometric Method (MGM)
+
+Implement MGM separately.
+
+Do not simply label GM as MGM.
+
+Use the published MGM definition.
+
+Test:
+
+* raw spectrum;
+* smoothed spectrum;
+* background-subtracted spectrum.
+
+MGM is particularly important as a classical benchmark.
+
+Expected behavior:
+
+### High SNR
+
+Good performance.
+
+### Moderate SNR
+
+Potentially good.
+
+### Low SNR
+
+Expected to degrade as the noise changes the integrated-power shape.
+
+Li et al. specifically report that MGM performs well under relatively low image noise but can overestimate maximum velocity. ([MDPI][4])
+
+---
+
+# 11. Estimator 6 — SNSI
+
+Implement **Signal-Noise Slope Intersection (SNSI)**.
+
+The conceptual model is:
+
+```text
+signal region
+      \
+       \
+        \ transition
+         \
+          \ noise floor
+```
+
+Estimate the signal and noise slopes and identify their intersection.
+
+Use this as a direct implementation of the published algorithm.
+
+Reference:
+
+Kathpalia et al., *Adaptive Spectral Envelope Estimation for Doppler Ultrasound*, IEEE TUFFC, 2016. DOI 10.1109/TUFFC.2016.2587381. ([PubMed][1])
+
+Important experiment:
+
+Vary the SNSI parameters systematically.
+
+Do not report a single SNSI result without documenting:
+
+* smoothing;
+* slope-window size;
+* noise-floor estimator;
+* minimum signal range;
+* search limits.
+
+---
+
+# 12. Estimator 7 — modified/adaptive SNSI
+
+This should be one of the main classical competitors.
+
+Implement the method from:
+
+**Kathpalia et al., 2016 — Adaptive Spectral Envelope Estimation for Doppler Ultrasound.**
+
+The method modifies SNSI and incorporates aspects of an altered GM, with adaptive noise estimation from the spectrogram. The authors tested it on simulations, phantom data and several in-vivo vascular datasets. ([PubMed][1])
+
+Implement it as faithfully as practical.
+
+The key idea is:
+
+```text
+estimate noise
+      ↓
+estimate signal/noise transition
+      ↓
+determine maximum-frequency point
+      ↓
+smooth envelope
+```
+
+This is likely to be one of the strongest **spectrum-based** methods in the benchmark.
+
+---
+
+# 13. Estimator 8 — QIA
+
+Implement the **Quadratic Iteration Algorithm (QIA)** from Li et al. 2019.
+
+Reference:
+
+J. Li et al., *A Robust Automatic Ultrasound Spectral Envelope Estimation*, Information, 2019, 10(6), 199. DOI 10.3390/info10060199. ([DOI][5])
+
+The paper proposes QIA based on the integrated power spectrum and compares it against MGM and MSNSI. It specifically investigates robustness to added noise and reports applicability to negative-flow conditions. ([MDPI][4])
+
+Implement:
+
+```python
+qia_envelope(column)
+```
+
+and document every parameter.
+
+Important benchmark:
+
+Measure computational cost as well as accuracy.
+
+The paper reports QIA as approximately \(O(2N)\), compared with \(O(N)\) for MGM/MSNSI. ([DOI][5])
+
+For a single DICOM frame this is unlikely to matter much, but it is useful if this eventually becomes real-time software.
+
+---
+
+# 14. Estimator 9 — image segmentation + boundary extraction
+
+This should be one of the primary candidates.
+
+The basic architecture:
+
+```text
+DICOM
+ ↓
+grayscale
+ ↓
+denoise
+ ↓
+background normalization
+ ↓
+binary Doppler mask
+ ↓
+morphological processing
+ ↓
+connected components
+ ↓
+upper/lower boundary
+ ↓
+temporal smoothing
+```
+
+This corresponds closely to the processing decomposition identified in Sulas et al.:
+
+1. image preprocessing;
+2. image binarization;
+3. image post-processing;
+4. envelope extraction;
+5. envelope post-processing. ([PubMed Central (PMC)][2])
+
+Implement each stage independently so that combinations can be tested.
+
+---
+
+# 15. Image preprocessing variants
+
+Test:
+
+### P0 — none
+
+Raw normalized image.
+
+### P1 — Gaussian blur
+
+Small sigma.
+
+### P2 — median filter
+
+Useful for isolated speckle-like artifacts.
+
+### P3 — background subtraction
+
+Estimate low-frequency background using:
+
+$$
+I_\mathrm{signal}=I-G_\sigma(I).
+$$
+
+### P4 — morphological top-hat
+
+Potentially useful when Doppler signal is bright against a relatively uniform dark background.
+
+Do not assume aggressive preprocessing is beneficial.
+
+One of the experiments should explicitly determine:
+
+> Does preprocessing improve envelope error, or merely make the image look cleaner?
+
+---
+
+# 16. Binary segmentation variants
+
+Implement:
+
+### B1 — global fixed threshold
+
+### B2 — Otsu
+
+### B3 — percentile threshold
+
+### B4 — local/adaptive threshold
+
+### B5 — background-relative threshold
+
+For example:
+
+$$
+M(x,y)=
+[I(x,y)-B(x,y)] > k\sigma_N.
+$$
+
+This last approach is particularly attractive because the threshold is related to an estimated local noise/background level rather than absolute image intensity.
+
+---
+
+# 17. Morphological processing
+
+Test systematically:
+
+```text
+opening
+closing
+dilation
+erosion
+hole filling
+small-object removal
+```
+
+Parameters:
+
+```text
+structuring element shape:
+    rectangle
+    ellipse
+
+size:
+    1
+    2
+    3
+    5
+    7 pixels
+```
+
+Do not tune these parameters globally until you know the image resolution.
+
+A 3-pixel kernel has completely different physical significance for two different DICOM image sizes.
+
+---
+
+# 18. Connected-component filtering
+
+After binarization:
+
+1. label components;
+2. measure:
+
+   * area;
+   * width;
+   * height;
+   * aspect ratio;
+   * distance from baseline;
+   * overlap with expected Doppler region.
+3. reject implausible components.
+
+Potential rule:
+
+```text
+retain components that:
+    span sufficient x extent
+    OR
+    are close to the main Doppler component
+```
+
+Avoid simply taking the largest connected component.
+
+That may fail when:
+
+* the waveform has gaps;
+* positive and negative components are disconnected;
+* tissue Doppler has separate components.
+
+---
+
+# 19. Boundary extraction methods
+
+Implement several.
+
+## E1 — outermost occupied pixel
+
+For each x:
+
+$$
+e(x)=\max\{y:M(x,y)=1\}.
+$$
+
+Baseline method.
+
+---
+
+## E2 — biggest contiguous vertical region
+
+For each x:
+
+1. find contiguous foreground runs;
+2. select the largest/most plausible run;
+3. use its upper boundary.
+
+This is directly motivated by the family of image-processing envelope methods analyzed by Sulas et al. ([PubMed Central (PMC)][2])
+
+---
+
+## E3 — largest component boundary
+
+Extract the boundary of the selected connected component.
+
+---
+
+## E4 — maximum-gradient boundary
+
+Calculate:
+
+$$
+G_y = |\partial I/\partial y|
+$$
+
+and search for the strongest outward edge around the candidate signal region.
+
+This should be treated as an experimental method rather than a direct literature reproduction.
+
+---
+
+# 20. Temporal/spatial curve optimization
+
+This is the component I expect to make the biggest difference.
+
+Rather than independently estimating:
+
+$$
+e_1,e_2,\ldots,e_N
+$$
+
+solve for an entire curve:
+
+$$
+\mathbf e^*
+=
+\arg\max_{\mathbf e}
+\sum_x S(x,e_x)
+-\lambda\sum_x|e_x-e_{x-1}|
+-\mu\sum_x|e_x-2e_{x-1}+e_{x-2}|.
+$$
+
+Here:
+
+* \(S(x,y)\) = likelihood that pixel \((x,y)\) belongs to the envelope;
+* first-order term penalizes jumps;
+* second-order term penalizes excessive curvature.
+
+Implement dynamic programming.
+
+This is still a classical optimization algorithm, not machine learning.
+
+### Why this is attractive
+
+The envelope is physically/physiologically expected to be continuous.
+
+Noise is not.
+
+Therefore:
+
+```text
+noisy image
+      ↓
+pixel likelihood
+      ↓
+global constrained curve
+```
+
+should outperform:
+
+```text
+noisy image
+      ↓
+independent max per column
+```
+
+particularly at low SNR.
+
+---
+
+# 21. Add a Kalman-filter baseline
+
+After obtaining an initial envelope:
+
+$$
+e_t
+$$
+
+implement:
+
+* constant-velocity Kalman model;
+* optionally constant-acceleration model.
+
+State:
+
+$$
+x_t =
+\begin{bmatrix}
+e_t\\
+\dot e_t
+\end{bmatrix}
+$$
+
+or
+
+$$
+x_t =
+\begin{bmatrix}
+e_t\\
+\dot e_t\\
+\ddot e_t
+\end{bmatrix}.
+$$
+
+This should be used as a **post-processing/tracking experiment**, not as the primary detector.
+
+Compare:
+
+```text
+raw envelope
+vs
+median filtered
+vs
+Savitzky-Golay
+vs
+Kalman
+vs
+dynamic-programming envelope
+```
+
+---
+
+# 22. Latham-style Otsu/morphological method
+
+This deserves its own named implementation rather than merely being included as “Otsu + morphology.”
+
+Reference:
+
+Latham et al., *Stable Automatic Envelope Estimation for Noisy Doppler Ultrasound*, IEEE TUFFC 2021, 68(3), 465–481, DOI 10.1109/TUFFC.2020.3011823. ([PubMed][3])
+
+The published method is specifically designed to produce stable envelopes under high noise and variable envelope shape.
+
+It was tested using:
+
+* simulated pulsatile flow;
+* a flow phantom;
+* in-vivo ascending-aortic flow.
+
+For phantom SNR below 10 dB, the authors reported improved bias and standard deviation relative to their next-best comparator. ([PubMed][3])
+
+Because your input is already an image, this method is particularly relevant.
+
+Implement it as faithfully as possible from the publication, but clearly document which parts cannot be reproduced because you don't have the original Doppler audio.
+
+---
+
+# 23. Recommended benchmark hierarchy
+
+Do not initially benchmark dozens of arbitrary combinations.
+
+Use these as the main algorithms:
+
+```text
+A. Fixed threshold
+B. Otsu + morphology
+C. Percentile / integrated-power
+D. GM
+E. MGM
+F. SNSI
+G. Adaptive SNSI/GM — Kathpalia
+H. QIA — Li et al.
+I. Latham-style Otsu/morphological method
+J. Likelihood image + dynamic-programming curve
+```
+
+Then add variants.
+
+This gives a scientifically interpretable benchmark.
+
+---
+
+# 24. Reference annotation format
+
+Ask the user to provide manually annotated envelopes.
+
+Preferably store annotations separately from the DICOM:
+
+```json
+{
+    "image_id": "...",
+    "baseline_y": 123.4,
+    "upper_envelope": [...],
+    "lower_envelope": [...],
+    "valid_x_start": 20,
+    "valid_x_end": 480,
+    "mode": "spectral",
+    "annotator": "expert"
+}
+```
+
+Better still, support JSON/CSV.
+
+The annotation should represent **pixel coordinates**, not velocities initially.
+
+This avoids introducing errors from DICOM scale extraction.
+
+---
+
+# 25. Annotation tool
+
+Implement a lightweight matplotlib GUI.
+
+Required operations:
+
+* display image;
+* zoom/pan;
+* click baseline;
+* click envelope points;
+* drag/edit points;
+* interpolate between points;
+* erase/revise points;
+* save annotation.
+
+The user should be able to annotate:
+
+```text
+upper envelope
+lower envelope
+baseline
+valid time range
+```
+
+Optionally annotate:
+
+```text
+uncertain regions
+artifact regions
+```
+
+These uncertain regions should be excluded from strict pointwise scoring.
+
+---
+
+# 26. Evaluation metrics
+
+Do **not** rely on one metric.
+
+Use at least five.
+
+## 26.1 Mean absolute envelope error
+
+$$
+MAE =
+\frac{1}{N}
+\sum_x
+|\hat e(x)-e_\mathrm{ref}(x)|.
+$$
+
+Report pixels and normalized velocity units.
+
+---
+
+## 26.2 RMSE
+
+$$
+RMSE =
+\sqrt{
+\frac1N
+\sum_x
+(\hat e(x)-e_\mathrm{ref}(x))^2
+}.
+$$
+
+RMSE exposes occasional catastrophic excursions.
+
+---
+
+## 26.3 Relative error
+
+$$
+RE =
+\frac{|\hat e-e|}
+{|e|+\epsilon}.
+$$
+
+Be careful around zero velocity.
+
+For that reason, calculate relative error only where:
+
+$$
+|e| > e_\mathrm{min}.
+$$
+
+---
+
+# 27. Clinically relevant derived metrics
+
+For each waveform calculate:
+
+### Peak velocity
+
+$$
+V_\mathrm{max}=\max_x e(x).
+$$
+
+Compare:
+
+$$
+|\hat V_\mathrm{max}-V_\mathrm{max}|.
+$$
+
+### Mean velocity
+
+If meaningful for the modality.
+
+### VTI
+
+$$
+VTI=\int e(t)\,dt.
+$$
+
+This should be a major metric for cardiac spectral Doppler.
+
+### Timing
+
+Measure:
+
+* onset;
+* peak;
+* end;
+* duration.
+
+This is especially important because an envelope that is visually reasonable can still produce poor timing.
+
+---
+
+# 28. Shape metrics
+
+Calculate correlation:
+
+$$
+\rho(\hat e,e).
+$$
+
+Also:
+
+$$
+R^2.
+$$
+
+But don't use correlation alone.
+
+A waveform can have:
+
+$$
+\rho \approx 1
+$$
+
+while having substantial systematic bias.
+
+Therefore report:
+
+```text
+MAE
+RMSE
+bias
+correlation
+Vmax error
+VTI error
+timing error
+```
+
+---
+
+# 29. Bland–Altman analysis
+
+For clinically meaningful scalar quantities:
+
+* Vmax;
+* VTI;
+* EDV;
+* PSV if applicable;
+
+generate Bland–Altman plots.
+
+Calculate:
+
+$$
+d_i=\hat y_i-y_i
+$$
+
+and
+
+$$
+\bar y_i=\frac{\hat y_i+y_i}{2}.
+$$
+
+Report:
+
+* mean bias;
+* standard deviation;
+* limits of agreement.
+
+Do not merely report correlation.
+
+---
+
+# 30. Envelope coverage metrics
+
+Introduce:
+
+### Overestimation fraction
+
+$$
+F_\mathrm{over}
+=
+\frac{
+\#\{x:\hat e(x)>e(x)+\delta\}
+}{N}.
+$$
+
+### Underestimation fraction
+
+$$
+F_\mathrm{under}
+=
+\frac{
+\#\{x:\hat e(x)<e(x)-\delta\}
+}{N}.
+$$
+
+This is useful because different algorithms have characteristic bias.
+
+For example, GM/MGM can have a tendency toward overestimation according to Li et al. ([MDPI][4])
+
+---
+
+# 31. Smoothness metrics
+
+Calculate:
+
+$$
+S_1=
+\frac1{N-1}
+\sum_x
+|\hat e_{x+1}-\hat e_x|
+$$
+
+and
+
+$$
+S_2=
+\frac1{N-2}
+\sum_x
+|\hat e_{x+2}-2\hat e_{x+1}+\hat e_x|.
+$$
+
+These quantify:
+
+* jitter;
+* excessive curvature.
+
+But **do not optimize purely for smoothness**.
+
+A perfectly smooth waveform can be physiologically wrong.
+
+---
+
+# 32. SNR robustness experiment
+
+This should be a major experiment.
+
+Since the user has single-vendor images with varying SNR, first estimate/obtain the SNR associated with each example.
+
+If actual SNR labels are unavailable, create a proxy.
+
+For example:
+
+$$
+SNR =
+10\log_{10}
+\frac{P_\mathrm{signal}}
+{P_\mathrm{background}}.
+$$
+
+Define signal/background ROIs.
+
+However, do not call this an absolute physical SNR unless the image formation characteristics justify it.
+
+Call it:
+
+```text
+image-domain SNR proxy
+```
+
+---
+
+# 33. SNR performance curves
+
+For every estimator generate:
+
+```text
+x-axis = SNR
+y-axis = MAE
+```
+
+and:
+
+```text
+x-axis = SNR
+y-axis = RMSE
+```
+
+and:
+
+```text
+x-axis = SNR
+y-axis = VTI error
+```
+
+and:
+
+```text
+x-axis = SNR
+y-axis = Vmax error
+```
+
+This is more informative than reporting one overall number.
+
+---
+
+# 34. Expected SNR hypothesis
+
+Before running the experiment, explicitly register this hypothesis:
+
+### High SNR
+
+Expected ordering:
+
+```text
+GM/MGM/SNSI/QIA
+≈
+image methods
+```
+
+with relatively small differences.
+
+### Moderate SNR
+
+Expected:
+
+```text
+adaptive SNSI
+QIA
+Latham-style image method
+dynamic-programming method
+```
+
+to become more attractive.
+
+### Low SNR
+
+Expected:
+
+```text
+dynamic-programming image method
+≈
+Latham-style Otsu/morphological method
+```
+
+to outperform independent column-wise estimators.
+
+This is a **hypothesis to test**, not a conclusion.
+
+Latham et al.'s low-SNR experiments provide supporting motivation for this hypothesis: their method was specifically designed for noisy signals and showed an advantage at SNR below 10 dB in their phantom experiments. ([PubMed][3])
+
+---
+
+# 35. Spectral Doppler vs tissue Doppler experiment
+
+This should be an explicit factorial experiment.
+
+Create four groups:
+
+```text
+spectral / high SNR
+spectral / low SNR
+TDI / high SNR
+TDI / low SNR
+```
+
+For each estimator calculate:
+
+$$
+MAE_\mathrm{spectral}
+$$
+
+and
+
+$$
+MAE_\mathrm{TDI}.
+$$
+
+Then calculate the interaction:
+
+$$
+\Delta =
+(MAE_{TDI,low}-MAE_{TDI,high})
+-
+(MAE_{spec,low}-MAE_{spec,high}).
+$$
+
+This tells us whether TDI has a fundamentally different sensitivity to SNR.
+
+---
+
+# 36. Positive and negative velocity
+
+Do not assume only the upper envelope exists.
+
+For each image determine:
+
+```text
+positive only
+negative only
+bidirectional
+```
+
+Benchmark separately.
+
+This matters because some published methods have limitations when negative velocity is present. Li et al. specifically discuss this limitation and designed QIA to handle negative-flow cases. ([MDPI][4])
+
+---
+
+# 37. Important issue: baseline-crossing waveforms
+
+Test cases where the waveform:
+
+* crosses zero;
+* approaches zero;
+* has positive and negative components;
+* has signal on both sides of baseline.
+
+Do not simply smooth the positive and negative envelopes independently across the baseline.
+
+Use signed coordinates.
+
+---
+
+# 38. Important issue: aliasing
+
+Determine whether the supplied images contain PW aliasing.
+
+If yes, add a separate flag:
+
+```python
+aliasing_present = True
+```
+
+Do **not** interpret an aliased spectral boundary as the physical maximum velocity.
+
+The initial project should distinguish:
+
+```text
+envelope detection
+```
+
+from:
+
+```text
+alias correction / velocity unwrapping
+```
+
+If aliasing is common, add an independent experiment for it.
+
+---
+
+# 39. Important issue: spectral broadening
+
+This is fundamental.
+
+The outermost visible spectral boundary is not necessarily the true maximum physical velocity.
+
+Therefore distinguish:
+
+```text
+image envelope
+```
+
+from:
+
+```text
+physical maximum velocity
+```
+
+The literature explicitly identifies intrinsic spectral broadening as a source of maximum-velocity estimation error. ([PubMed][1])
+
+For the initial benchmark, use the expert's trace as the target.
+
+Do not claim physical ground truth unless phantom/reference-flow information is available.
+
+---
+
+# 40. Important issue: image compression and rendering
+
+Since the input is DICOM image data, determine whether:
+
+* logarithmic compression;
+* dynamic range;
+* grayscale mapping;
+* interpolation;
+* JPEG compression;
+* annotations;
+* display LUTs
+
+have modified the original spectral intensities.
+
+This means:
+
+> Integrated power calculated from image grayscale is only a proxy for actual Doppler power.
+
+Therefore GM/MGM/QIA/SNSI should be treated as **image-domain adaptations**, not mathematically identical reproductions of the original signal-domain algorithms.
+
+This distinction must be documented in the code and report.
+
+---
+
+# 41. Important issue: pixel aspect ratio
+
+Do not treat:
+
+```text
+1 pixel x
+```
+
+as equivalent to:
+
+```text
+1 pixel y
+```
+
+The x-axis represents time and the y-axis represents velocity/frequency.
+
+Morphological kernels should therefore be interpreted in physical coordinates where possible.
+
+For example:
+
+```python
+kernel_width_ms
+kernel_height_velocity
+```
+
+should eventually be converted into pixels.
+
+This will make the algorithm much more robust.
+
+---
+
+# 42. Hyperparameter optimization
+
+Do not optimize parameters on all data.
+
+Split the supplied dataset into:
+
+```text
+development set
+validation set
+test set
+```
+
+Ideally stratify by:
+
+* modality;
+* SNR;
+* waveform type.
+
+Example:
+
+```text
+60% development
+20% validation
+20% test
+```
+
+If there are few images, use grouped cross-validation.
+
+Crucially:
+
+> Images from the same acquisition/subject/recording should never appear in both training/tuning and test partitions.
+
+Even though this is not machine learning, parameter tuning can otherwise produce optimistic results.
+
+---
+
+# 43. Hyperparameters to tune
+
+For each method document:
+
+### Threshold methods
+
+```text
+threshold percentile
+```
+
+### Otsu/morphology
+
+```text
+Gaussian sigma
+morphology size
+minimum component area
+closing radius
+opening radius
+```
+
+### GM/MGM
+
+```text
+smoothing
+search limits
+geometric parameters
+```
+
+### SNSI
+
+```text
+noise estimation parameters
+slope window
+minimum signal
+```
+
+### QIA
+
+```text
+iteration limit
+convergence tolerance
+initialization
+```
+
+### Dynamic programming
+
+```text
+data-term weighting
+first-order smoothness
+second-order smoothness
+maximum slope
+maximum curvature
+```
+
+---
+
+# 44. Robustness experiment beyond SNR
+
+Vary independently where possible:
+
+### Waveform morphology
+
+* narrow;
+* broad;
+* sharp systolic peak;
+* rounded peak;
+* multi-peaked;
+* low diastolic flow;
+* nearly continuous flow.
+
+### Signal occupancy
+
+* sparse;
+* dense.
+
+### Baseline position
+
+* centered;
+* asymmetric.
+
+### Positive/negative flow
+
+* positive;
+* negative;
+* both.
+
+### Image quality
+
+* smooth;
+* speckled;
+* compression artifacts.
+
+This helps identify whether a method is genuinely robust or merely tuned to one morphology.
+
+---
+
+# 45. Ablation study
+
+For the likely best image-based detector, perform:
+
+```text
+raw image
+raw + smoothing
+raw + threshold
+raw + morphology
+raw + morphology + connected components
+raw + morphology + dynamic tracking
+```
+
+Compare each.
+
+This will answer:
+
+> Which part of the algorithm actually provides the robustness?
+
+That is scientifically more valuable than simply finding the lowest test error.
+
+---
+
+# 46. Ensemble / fallback strategy
+
+Do not implement an ensemble initially.
+
+First determine the strongest individual estimator.
+
+Then consider a deterministic fallback:
+
+```text
+if quality high:
+    classical estimator
+else:
+    robust image estimator
+```
+
+Potential quality indicators:
+
+* estimated SNR;
+* foreground/background contrast;
+* envelope continuity;
+* fraction of missing columns;
+* competing candidate boundaries.
+
+A final system could select the algorithm based on measured image quality.
+
+However, evaluate this only after the individual methods have been benchmarked.
+
+---
+
+# 47. Confidence/quality score
+
+Every detected envelope should return:
+
+```python
+EnvelopeResult(
+    envelope,
+    confidence,
+    snr_proxy,
+    coverage,
+    smoothness,
+    method,
+)
+```
+
+Potential confidence features:
+
+$$
+C =
+w_1 C_\mathrm{contrast}
++w_2 C_\mathrm{continuity}
++w_3 C_\mathrm{coverage}
++w_4 C_\mathrm{boundary}
+$$
+
+Do not train this initially.
+
+Use interpretable deterministic measures.
+
+---
+
+# 48. Visualization requirements
+
+For every test image produce one figure containing:
+
+```text
+Panel 1:
+original DICOM
+
+Panel 2:
+preprocessed image
+
+Panel 3:
+binary mask
+
+Panel 4:
+candidate envelope
+
+Panel 5:
+reference + all algorithm envelopes
+```
+
+Use consistent axes.
+
+For comparison plots:
+
+```text
+reference
+fixed threshold
+GM
+MGM
+SNSI
+adaptive SNSI
+QIA
+Otsu/morphology
+dynamic programming
+```
+
+This will be extremely useful for diagnosing failure modes.
+
+---
+
+# 49. Automatically generate a failure gallery
+
+Sort test cases by:
+
+```text
+largest MAE
+largest Vmax error
+largest VTI error
+largest overestimation
+largest underestimation
+lowest confidence
+```
+
+Save the worst 20 cases for every method.
+
+This is much more useful than looking only at aggregate metrics.
+
+---
+
+# 50. Statistical analysis
+
+For each method report:
+
+```text
+mean
+median
+standard deviation
+IQR
+95th percentile
+worst case
+```
+
+Do not rely only on mean error because a robust envelope detector should ideally avoid catastrophic failures.
+
+Use paired comparisons because all algorithms operate on the same images.
+
+For example:
+
+$$
+d_i =
+MAE_{method1,i}
+-
+MAE_{method2,i}.
+$$
+
+Report confidence intervals for the median/mean paired difference.
+
+With a small dataset, bootstrap the image-level differences.
+
+---
+
+# 51. Primary endpoint
+
+Choose **one primary metric before seeing results**.
+
+I recommend:
+
+$$
+\boxed{\text{normalized envelope MAE}}
+$$
+
+over the valid annotated waveform region.
+
+Secondary endpoints:
+
+1. Vmax error;
+2. VTI error;
+3. RMSE;
+4. over/underestimation;
+5. timing error;
+6. robustness versus SNR;
+7. failure rate.
+
+This prevents choosing whichever metric happens to favor the eventual preferred method.
+
+---
+
+# 52. Recommended final benchmark table
+
+Produce something like:
+
+| Method              | MAE | RMSE | Vmax err. | VTI err. | Bias | Failure rate | Low-SNR MAE |
+| ------------------- | --: | ---: | --------: | -------: | ---: | -----------: | ----------: |
+| Fixed threshold     |     |      |           |          |      |              |             |
+| Otsu                |     |      |           |          |      |              |             |
+| Percentile          |     |      |           |          |      |              |             |
+| GM                  |     |      |           |          |      |              |             |
+| MGM                 |     |      |           |          |      |              |             |
+| SNSI                |     |      |           |          |      |              |             |
+| Adaptive SNSI       |     |      |           |          |      |              |             |
+| QIA                 |     |      |           |          |      |              |             |
+| Latham-style        |     |      |           |          |      |              |             |
+| Dynamic programming |     |      |           |          |      |              |             |
+
+Also produce separate tables for:
+
+```text
+Spectral Doppler
+Tissue Doppler
+High SNR
+Medium SNR
+Low SNR
+```
+
+---
+
+# 53. Expected outcome / hypothesis
+
+Before running the experiment, put the following into the project README as a **pre-registered hypothesis**.
+
+### Hypothesis H1
+
+At high SNR, classical spectrum-based methods—especially adaptive SNSI/GM and QIA—will be competitive with image-based methods.
+
+### Hypothesis H2
+
+At decreasing SNR, image-based methods will degrade more gracefully because they exploit spatial continuity.
+
+### Hypothesis H3
+
+A global curve-tracking formulation will outperform independent-column estimators at low SNR.
+
+### Hypothesis H4
+
+The same overall detector architecture can be used for spectral Doppler and TDI, but optimal preprocessing/regularization parameters will differ.
+
+### Hypothesis H5
+
+The best practical solution will likely be a **hybrid image-domain method**, approximately:
+
+```text
+adaptive background estimation
+        ↓
+contrast normalization
+        ↓
+Otsu/adaptive segmentation
+        ↓
+morphological cleanup
+        ↓
+candidate boundary likelihood
+        ↓
+dynamic-programming envelope tracking
+        ↓
+light temporal smoothing
+```
+
+rather than pure GM/MGM/SNSI.
+
+This hypothesis is motivated by the low-SNR results reported by Latham et al. and by the systematic image-processing analysis of Sulas et al., but should be treated as an empirical hypothesis for this particular single-vendor DICOM dataset. ([PubMed][3])
+
+---
+
+# 54. One particularly important experiment
+
+I would make this the centerpiece of the project:
+
+## "Does 2-D information actually help?"
+
+For every image calculate:
+
+### Method A
+
+Independent column-wise estimate:
+
+$$
+\hat e_t=f(I_t)
+$$
+
+### Method B
+
+Column-wise estimate + 1-D smoothing:
+
+$$
+\hat e_t=\mathrm{smooth}(f(I_t))
+$$
+
+### Method C
+
+2-D image segmentation:
+
+$$
+M(x,y)
+$$
+
+followed by boundary extraction.
+
+### Method D
+
+2-D likelihood + globally optimized curve:
+
+$$
+\hat e=
+\arg\max_e
+\left[
+\sum_x S(x,e_x)
+-\lambda R(e)
+\right].
+$$
+
+Then plot performance against SNR.
+
+If C/D substantially outperform A/B at low SNR, that provides strong evidence that the correct abstraction for your application is **image segmentation/tracking rather than spectral maximum estimation**.
+
+---
+
+# 55. Proposed Python API
+
+Have Claude implement something approximately like:
+
+```python
+result = detector.detect(
+    image,
+    baseline=baseline,
+    mode="spectral",
+)
+```
+
+Return:
+
+```python
+@dataclass
+class EnvelopeResult:
+    upper: np.ndarray
+    lower: np.ndarray | None
+    baseline: float
+    confidence: np.ndarray
+    snr_proxy: float
+    method: str
+    diagnostics: dict
+```
+
+Every algorithm should implement the same interface:
+
+```python
+class EnvelopeEstimator(ABC):
+
+    @abstractmethod
+    def fit(self, image, baseline, config):
+        ...
+
+    @abstractmethod
+    def detect(self, image, baseline):
+        ...
+```
+
+This makes benchmarking straightforward.
+
+---
+
+# 56. Reproducibility
+
+Every experiment must save:
+
+```text
+algorithm name
+version
+configuration
+image ID
+ROI
+baseline
+random seed
+metrics
+runtime
+```
+
+Store results in:
+
+```text
+results/
+    raw/
+    summary/
+    figures/
+    failure_cases/
+```
+
+Configuration should be YAML:
+
+```yaml
+method: adaptive_snsi
+
+preprocessing:
+  gaussian_sigma: 1.0
+  background_subtraction: true
+
+threshold:
+  percentile: 95
+
+tracking:
+  lambda_smooth: 2.0
+  lambda_curvature: 1.0
+```
+
+Never bury parameters in Python code.
+
+---
+
+# 57. Unit tests
+
+Claude should implement synthetic test images even before using your real DICOM data.
+
+Generate synthetic Doppler images with known envelopes:
+
+### Test waveform 1
+
+Gaussian pulse.
+
+### Test waveform 2
+
+Sharp systolic pulse.
+
+### Test waveform 3
+
+Two peaks.
+
+### Test waveform 4
+
+Positive + negative.
+
+### Test waveform 5
+
+Baseline crossing.
+
+### Test waveform 6
+
+Low-SNR waveform.
+
+Then add:
+
+```text
+Gaussian noise
+salt-and-pepper noise
+background gradients
+random speckles
+holes
+missing columns
+```
+
+Because the ground truth is known exactly, this allows algorithm debugging independently of clinical annotations.
+
+---
+
+# 58. Do not use synthetic data to claim clinical performance
+
+Synthetic experiments are for:
+
+* debugging;
+* parameter sensitivity;
+* understanding failure mechanisms.
+
+Your real DICOM data remain the primary benchmark.
+
+If you have enough images, the most valuable extension would be a small **phantom or known-velocity reference dataset**, because that addresses the limitation of using expert tracing as ground truth.
+
+---
+
+# 59. Literature references to include in the project
+
+At minimum, put these in `REFERENCES.md`.
+
+### Kathpalia et al., 2016
+
+A. Kathpalia, Y. Karabiyik, S. H. Eik-Nes, E. Tegnander, I. K. Ekroll, G. Kiss, H. Torp,
+
+**“Adaptive Spectral Envelope Estimation for Doppler Ultrasound,”**
+
+*IEEE Transactions on Ultrasonics, Ferroelectrics, and Frequency Control*, 63(11), 1825–1838, 2016.
+
+DOI: 10.1109/TUFFC.2016.2587381. ([PubMed][1])
+
+This should be the principal reference for the adaptive SNSI/GM family.
+
+### Li et al., 2019
+
+J. Li, Y. Zhang, X. Liu, P. Liu, H. Yin, D. C. Liu,
+
+**“A Robust Automatic Ultrasound Spectral Envelope Estimation,”**
+
+*Information*, 10(6), 199, 2019.
+
+DOI: 10.3390/info10060199. ([DOI][5])
+
+Principal reference for QIA and comparison against MGM/MSNSI.
+
+### Latham et al., 2021
+
+J. Latham, Y. A. Hicks, X. Yang, R. Setchi, T. Rainer,
+
+**“Stable Automatic Envelope Estimation for Noisy Doppler Ultrasound,”**
+
+*IEEE Transactions on Ultrasonics, Ferroelectrics, and Frequency Control*, 68(3), 465–481, 2021.
+
+DOI: 10.1109/TUFFC.2020.3011823. ([PubMed][3])
+
+Principal reference for the robust Otsu/morphological/image-domain approach.
+
+### Sulas et al., 2021
+
+E. Sulas et al.,
+
+**“Impact of pulsed-wave-Doppler velocity-envelope tracing techniques on classification of complete fetal cardiac cycles,”**
+
+*PLOS ONE*, 16(4), e0248114, 2021.
+
+DOI: 10.1371/journal.pone.0248114. ([PLOS][6])
+
+Useful systematic reference for image preprocessing, binarization, post-processing and envelope extraction.
+
+---
+
+# 60. What I expect to be the eventual winner
+
+I would **not** start the project assuming QIA, SNSI, GM or Otsu is the final solution.
+
+For your particular constraints—**single-vendor, single-frame rendered DICOM, both spectral and tissue Doppler, varying SNR**—my working hypothesis would be:
+
+> **A carefully designed 2-D image-domain detector with adaptive background estimation + robust binarization + morphology + connected-component filtering + constrained curve tracking is the most likely overall winner.**
+
+More specifically, I would expect:
+
+```text
+High SNR:
+    GM / adaptive SNSI / QIA
+        ≈
+    image-based method
+
+Medium SNR:
+    adaptive SNSI / QIA
+        ≈
+    robust image method
+
+Low SNR:
+    robust image method
+        >
+    independent spectrum estimators
+```
+
+and I would expect the **dynamic-programming curve tracker** to be particularly useful for the lowest-SNR cases.
+
+The key reason is that your problem is not really "estimate maximum frequency from a power spectrum." Once the ultrasound system has rendered the spectrum into a DICOM image, your problem becomes:
+
+$$
+\boxed{
+\text{find the most probable continuous Doppler-energy boundary in a noisy 2-D image}
+}
+$$
+
+That formulation naturally accommodates both spectral Doppler and TDI, whereas GM/SNSI/QIA are more tightly tied to assumptions about a one-dimensional power spectrum.
+
+One caveat is important: Latham's published algorithm derives its spectrogram from Doppler audio rather than from an already-rendered ultrasound screenshot/DICOM, specifically to avoid device-dependent image-rendering effects. ([PubMed][3]) Therefore, in your project I would treat it as an **important conceptual and algorithmic benchmark**, not assume that a literal implementation will reproduce its published performance on your DICOM frames.
+
+Finally, I would have Claude produce **both the implementation and a research-style benchmark report**. The report should automatically answer, from your actual data, three questions: **(1) which estimator is most accurate, (2) how the ranking changes with SNR, and (3) whether one common detector really works for spectral and tissue Doppler.** That will be considerably more informative than selecting an algorithm from the literature a priori.
+
+[1]: https://pubmed.ncbi.nlm.nih.gov/27824563/?utm_source=chatgpt.com "Adaptive Spectral Envelope Estimation for Doppler Ultrasound."
+[2]: https://pmc.ncbi.nlm.nih.gov/articles/PMC8081200/?utm_source=chatgpt.com "Impact of pulsed-wave-Doppler velocity-envelope tracing techniques on classification of complete fetal cardiac cycles - PMC"
+[3]: https://pubmed.ncbi.nlm.nih.gov/32746225/?utm_source=chatgpt.com "Stable Automatic Envelope Estimation for Noisy Doppler Ultrasound."
+[4]: https://www.mdpi.com/2078-2489/10/6/199?utm_source=chatgpt.com "A Robust Automatic Ultrasound Spectral Envelope Estimation"
+[5]: https://doi.org/10.3390/info10060199?utm_source=chatgpt.com "A Robust Automatic Ultrasound Spectral Envelope Estimation"
+[6]: https://journals.plos.org/plosone/article?id=10.1371%2Fjournal.pone.0248114&utm_source=chatgpt.com "Impact of pulsed-wave-Doppler velocity-envelope tracing techniques on classification of complete fetal cardiac cycles | PLOS One"

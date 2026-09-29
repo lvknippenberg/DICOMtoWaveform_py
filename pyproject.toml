@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dicom2waveform"
+version = "0.1.0"
+description = "Extract ECG and Doppler envelopes (max/min/mean) from spectral/tissue Doppler ultrasound DICOM images"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "pydicom>=2.4",
+    "scikit-image>=0.21",
+    "matplotlib>=3.7",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+bench = ["pandas>=2", "tabulate>=0.9"]
+
+[tool.setuptools.packages.find]
+include = ["dicom2waveform*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

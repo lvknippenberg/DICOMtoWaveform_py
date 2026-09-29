@@ -1,0 +1,17 @@
+# Patient data: never commit DICOMs or full-frame renderings (burned-in PHI)
+*.dcm
+/data/
+/results/
+*.png
+*.pdf
+!docs/**/*.svg
+# synthetic / aggregate benchmark figures only (no patient images)
+!docs/results/*.png
+
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.ipynb_checkpoints/

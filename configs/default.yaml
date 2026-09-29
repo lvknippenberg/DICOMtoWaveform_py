@@ -1,0 +1,74 @@
+# Default configuration (generated from dicom2waveform/config.py; documentation lives there).
+frame: 0
+render:
+  chroma_threshold: 12
+  colormap_fraction: 0.5
+  baseline_search_rows: 6
+  min_sweep_width_px: 3
+  align_to_sweep: true
+  overlay_colour_tolerance: 6
+  text_level: 240.0
+  text_max_area: 600
+  text_ring_max: 70.0
+  suppress_clicks: true
+  click_min_snr: 6.0
+  click_background_s: 0.15
+  click_max_width_s: 0.035
+ecg:
+  search_margin_px: 100
+  search_above_px: 120
+  colour_tolerance: 6
+  min_component_width_frac: 0.03
+  max_gap_s: 0.05
+  detect_rpeaks: true
+  qrs_band_hz:
+  - 8.0
+  - 30.0
+  refractory_s: 0.25
+  energy_smooth_s: 0.1
+  thresh_fraction: 0.35
+  noise_floor_fraction: 0.15
+  searchback_gap_ratio: 1.66
+  twave_rr_fraction:
+  - 0.2
+  - 0.55
+  twave_relative_height: 0.5
+likelihood:
+  noise_margin: 32.0
+  noise_spread_factor: 4.0
+  soft_low_factor: 1.5
+  density_window_cm_s: 0.0
+  density_window_px_rows: 9
+  density_window_s: 0.0
+  density_window_px_cols: 5
+dp:
+  reference_accel_cm_s2: 640.0
+  accel_scale_with_range: true
+  reference_range_cm_s: 100.0
+  cost: edge
+  edge_density: 0.5
+  inner_band_rel: 0.05
+  height_prior: 0.01
+  wall_band_rel: 0.03
+  background_percentile: 50.0
+  normalise_percentile: 99.0
+  normalise_floor: 0.2
+estimator:
+  method: dp
+  params: {}
+mean:
+  weighting: power
+  dynamic_range_db: 40.0
+  clutter_band_cm_s: 0.0
+  min_pixels: 2
+post:
+  method: none
+  median_window_s: 0.015
+  savgol_window_s: 0.025
+  savgol_order: 2
+  kalman_q: 2000.0
+  kalman_r_cm_s: 0.0
+quality:
+  alias_edge_fraction: 0.02
+  alias_min_fraction: 0.01
+keep_diagnostics: false

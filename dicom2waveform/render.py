@@ -58,6 +58,9 @@ class Spectrogram:
     rgb: np.ndarray | None = None  # cropped display for plotting (H, W, 3)
     overlay: np.ndarray | None = None  # (H, W) bool overlay mask
     info: dict[str, Any] = field(default_factory=dict)
+    clicks: np.ndarray | None = None  # (W,) bool: valve-click columns
+    click_strength: np.ndarray | None = None  # (W,) transient height (robust SDs)
+    click_mode: str = "bridge"
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -70,6 +73,19 @@ class Spectrogram:
     @property
     def v_limits(self) -> tuple[float, float]:
         v = self.velocity
+        return float(v.min()), float(v.max())
+
+    @property
+    def display_height(self) -> int:
+        """Rows of the displayed spectral region (unchanged by aliasing unwrapping)."""
+        return int(self.region.height)
+
+    @property
+    def display_v_limits(self) -> tuple[float, float]:
+        """Velocity limits of the display as rendered by the scanner (the Nyquist
+        window for PW), also after aliasing unwrapping."""
+        z0 = self.info.get("display_zero_row", self.zero_row)
+        v = (np.array([0, self.display_height - 1]) - z0) * self.dy
         return float(v.min()), float(v.max())
 
     def row_of_velocity(self, v: np.ndarray | float) -> np.ndarray | float:
@@ -154,22 +170,45 @@ def find_text(level: np.ndarray, overlay: np.ndarray, cfg: RenderConfig) -> np.n
     return ndimage.binary_dilation(mask, iterations=1)
 
 
-def find_clicks(level: np.ndarray, sweep: np.ndarray, dt: float, cfg: RenderConfig) -> np.ndarray:
-    """Columns holding a valve-closure click (short broadband transient)."""
+def find_clicks(level: np.ndarray, sweep: np.ndarray, dt: float, cfg: RenderConfig,
+                return_strength: bool = False):
+    """Columns holding a valve click (short broadband transient).
+
+    With return_strength, also returns the transient height in robust SDs per
+    column (used to rank clicks, e.g. for aortic valve closure)."""
     W = level.shape[1]
     E = level.mean(axis=0)
     E[sweep] = np.nan
-    n = max(5, int(round(cfg.click_background_s / dt)) | 1)
-    Ef = np.where(np.isnan(E), np.nanmedian(E), E)
-    hp = Ef - ndimage.median_filter(Ef, size=n, mode="nearest")
+    # White top-hat of the column-mean level: E minus its grey opening with a
+    # flat window one maximum click-width wide. The opening removes only
+    # features narrower than a click and keeps steps, so a flow onset/offset
+    # gives ~0 while a click keeps its excess, also when it sits on the flank
+    # of a jet (aortic closure at the end of ejection).
+    m = max(1, int(round(cfg.click_max_width_s / dt)))
+    x = np.arange(W)
+    good = ~np.isnan(E)
+    if good.sum() < 2 * m:
+        z = np.zeros(W, bool)
+        return (z, np.zeros(W)) if return_strength else z
+    Ef = np.interp(x, x[good], E[good])  # bridge the sweep with the edge levels
+    hp = Ef - ndimage.grey_opening(Ef, size=m + 2, mode="nearest")
     hp[sweep] = 0.0
+    # the first/last columns of the data cannot be confirmed as transients
+    edge = np.zeros(W, bool)
+    for a, b in _runs(good):
+        edge[a:min(a + m, b + 1)] = True
+        edge[max(a, b - m + 1):b + 1] = True
+    hp[edge] = 0.0
     sig = 1.4826 * np.median(np.abs(hp - np.median(hp))) + 1e-6
     cand = hp > cfg.click_min_snr * sig
     clicks = np.zeros(W, bool)
-    maxw = max(1, int(round(cfg.click_max_width_s / dt)))
     for a, b in _runs(cand):
-        if b - a + 1 <= maxw:
+        if b - a + 1 <= m:
             clicks[max(0, a - 1):b + 2] = True
+    if return_strength:
+        # strength for every column (not only clicks): R-gated detectors such
+        # as the aortic valve closure may use a lower threshold inside their window
+        return clicks, hp / sig
     return clicks
 
 
@@ -329,23 +368,38 @@ def build_spectrogram(
     level_filled = fill_invalid_columns(level, valid)
     level_filled[:, sweep] = 0.0
 
-    # Valve clicks: narrow, broadband, saturated vertical lines. Detected as
-    # transients of the column-mean level (as the MATLAB AVC detector does)
-    # and bridged horizontally so that no envelope estimator follows them.
-    clicks = find_clicks(level_filled, sweep, region.dx, cfg) if cfg.suppress_clicks else np.zeros(W, bool)
-    if clicks.any():
-        level_filled = bridge_columns(level_filled, clicks | sweep)
-        level_filled[:, sweep] = 0.0
-        info["click_columns"] = np.flatnonzero(clicks).tolist()
-
     velocity = (np.arange(H) - zero_row) * region.dy
     modality = classify_modality(region, colormap, (velocity.min(), velocity.max()))
-    info.update(colour_fraction=frac_colour, n_sweep_columns=int(sweep.sum()))
+
+    # Valve clicks: narrow, broadband, saturated vertical lines (the leaflets
+    # themselves, not blood flow). Detected as transients of the column-mean
+    # level (as the MATLAB AVC detector does). In 'bridge' mode (default) they
+    # are interpolated over so that no envelope estimator follows them; their
+    # times are reported separately (t_clicks, t_avc). Bridging applies only to
+    # cfg.click_bridge_modalities: on TDI, narrow transients are mostly tissue
+    # motion (isovolumic contraction/relaxation spikes), which the envelope
+    # must keep, so TDI uses 'keep'.
+    if cfg.click_mode not in ("bridge", "follow", "keep", "off"):
+        raise ValueError(f"unknown click_mode '{cfg.click_mode}'")
+    click_mode = cfg.click_mode
+    if click_mode in ("bridge", "follow") and modality not in cfg.click_bridge_modalities:
+        click_mode = "keep"
+    if click_mode == "off":
+        clicks, strength = np.zeros(W, bool), np.zeros(W)
+    else:
+        clicks, strength = find_clicks(level_filled, sweep, region.dx, cfg, return_strength=True)
+    if clicks.any():
+        info["click_columns"] = np.flatnonzero(clicks).tolist()
+        if click_mode == "bridge":
+            level_filled = bridge_columns(level_filled, clicks | sweep)
+            level_filled[:, sweep] = 0.0
+    info.update(colour_fraction=frac_colour, n_sweep_columns=int(sweep.sum()), display_zero_row=zero_row)
 
     return Spectrogram(
         level=level_filled, valid=valid, zero_row=zero_row, dy=float(region.dy), dt=float(region.dx),
         sweep=sweep, order=order, colormap=colormap, modality=modality, region=region,
         baseline_rows=baseline_rows, rgb=rgb, overlay=overlay, info=info,
+        clicks=clicks, click_strength=strength, click_mode=click_mode,
     )
 
 

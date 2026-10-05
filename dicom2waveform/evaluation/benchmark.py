@@ -93,7 +93,12 @@ def ablation_variants() -> list[Variant]:
         Variant("dp_hard_membership", "dp", {"hard_threshold": True}, group="ablation"),
         Variant("dp_no_density", "dp", {"use_density": False}, group="ablation"),
         Variant("dp_fixed_accel", "dp", {"accel_scale_with_range": False}, group="ablation"),
-        Variant("dp_no_click_bridge", "dp", overrides={"render": {"suppress_clicks": False}}, group="ablation"),
+        Variant("dp_no_click_bridge", "dp", overrides={"render": {"click_mode": "keep"}}, group="ablation"),
+        Variant("dp_follow_clicks", "dp", overrides={"render": {"click_mode": "follow"}}, group="ablation"),
+        Variant("dp_no_alias_correction", "dp", overrides={"aliasing": {"correct": False}}, group="ablation"),
+        Variant("dp_no_local_norm", "dp", overrides={"dp": {"local_norm_s": 0.0}}, group="ablation"),
+        Variant("dp_local_norm_all", "dp", overrides={"dp": {"local_norm_modalities": ["PW", "CW", "TDI"]}}, group="ablation"),
+        Variant("dp_tdi_theta_0.35", "dp", overrides={"dp": {"edge_density_tdi": 0.35}}, group="ablation"),
         Variant("dp_mean_level_w", "dp", overrides={"mean": {"weighting": "level"}}, group="ablation"),
         Variant("dp_mean_membership_w", "dp", overrides={"mean": {"weighting": "membership"}}, group="ablation"),
     ]
@@ -143,7 +148,7 @@ def run_variants_on_image(image, truth: dict[str, np.ndarray] | None, variants: 
             runtime = time.perf_counter() - t0
             o = spec.order
             series = {k: np.asarray(env[k], float)[o] for k in ("v_max", "v_min", "v_mean", "v_mean_pos", "v_mean_neg")}
-            span = spec.v_limits[1] - spec.v_limits[0]
+            span = spec.display_v_limits[1] - spec.display_v_limits[0]
             row = {**(case_info or {}), "variant": v.label, "method": v.method, "group": v.group,
                    "post": v.post, "runtime_s": runtime, "modality_detected": spec.modality}
             if truth is not None:
@@ -174,7 +179,7 @@ def _synthetic_job(args):
     from ..synthetic import SyntheticSpec, generate
     sp = SyntheticSpec(**spec_dict)
     case = generate(sp)
-    info = {"case": case.image.path, "modality": sp.modality, "waveform": sp.waveform, "snr_db": sp.snr_db,
+    info = {"case": case.image.path, "modality": sp.modality + ("_alias" if sp.alias else ""), "alias": sp.alias, "waveform": sp.waveform, "snr_db": sp.snr_db,
             "seed": sp.seed, "split": "dev" if sp.seed % 2 == 0 else "test", "span": sp.v_top - sp.v_bottom,
             "clutter_db": sp.clutter_db, "mirror_db": sp.mirror_db, "clicks": sp.clicks,
             "tissue": sp.modality == "TDI"}
@@ -244,7 +249,7 @@ def run_vendor(files, variants: list[Variant], base: PipelineConfig | None = Non
         spec = _render(img, base)
         o = spec.order
         v_gt = v_gt_raw[o]
-        span = spec.v_limits[1] - spec.v_limits[0]
+        span = spec.display_v_limits[1] - spec.display_v_limits[0]
         for row in rows:
             ser = row.pop("_series", None)
             if ser is None:

@@ -15,7 +15,9 @@ res.v_mean       # cm/s, intensity-weighted mean velocity inside the flow region
 res.v_mean_pos   # cm/s, same, positive half only
 res.v_mean_neg   # cm/s, same, negative half only
 res.t_rpeaks     # s, R-peak times
-res.flags        # modality (PW/CW/TDI), aliasing_suspected, ecg_clipped, snr_proxy_db, ...
+res.t_clicks     # s, valve-click times (narrow broadband transients; not part of the envelopes)
+res.t_avc        # s, aortic valve closure per beat (strongest click 0.2-0.5 s after R)
+res.flags        # modality (PW/CW/TDI), aliasing_suspected/_corrected, ecg_clipped, snr_proxy_db, ...
 res.to_csv("out.csv")
 ```
 
@@ -36,14 +38,19 @@ python scripts/run_examples.py <dicom_dir> <out_dir>
    never by item order).
 2. **Rendering to intensity.** Overlays (drawn baseline, time markers, ECG trace, text, scale ticks,
    vendor traces) are masked and filled; colour maps (TDI copper map) are converted to a scalar level;
-   valve clicks are bridged; the sweep is located and the output rotated to time order.
-3. **ECG** is traced from its rendered colour, per column; R-peaks from QRS-band energy (port of the MATLAB
-   `DetectRpeaks.m`, with the DICOM `HeartRate` tag as a prior for search-back).
-4. **Envelopes (default: DP).** Noise-referenced soft signal membership -> local density ->
+   valve clicks are detected and reported as events (kept in the envelope by default; `render.click_mode`); the sweep is located and the output rotated
+   to time order.
+3. **Aliasing (PW/TDI)**: when the flow wraps around the display, an automatic per-column baseline shift
+   unwraps it, so `v_max` / `v_min` can exceed the display limits (`flags["aliasing_corrected"]`).
+4. **ECG** is traced from its rendered colour, per column; R-peaks from QRS-band energy (port of the MATLAB
+   `DetectRpeaks.m`, with the DICOM `HeartRate` tag as a prior for search-back); aortic valve closure
+   from the strongest valve click in the 0.2-0.5 s window after each R-peak (port of the MATLAB method).
+5. **Envelopes (default: DP).** Noise-referenced soft signal membership -> local density ->
    background-corrected and normalised -> per side, the globally optimal outer edge by dynamic
    programming with a physiological acceleration prior. The edge sits at half the image's typical
-   in-flow density (calibrated on scanner auto-traces).
-5. **Mean envelopes** are intensity-weighted (de-compressed display power by default) over the pixels
+   in-flow density (calibrated on scanner auto-traces); on TDI at half of each column's own maximum,
+   so faint but real tissue motion is kept.
+6. **Mean envelopes** are intensity-weighted (de-compressed display power by default) over the pixels
    between the baseline and the outer edge.
 
 All parameters are in `dicom2waveform/config.py` (dataclasses, physical units), overridable from YAML
@@ -61,8 +68,21 @@ segmentation pipeline for ablations. See `docs/BENCHMARK.md` for the design and 
 python scripts/benchmark_synthetic.py <out_dir>                   # synthetic suite, known truth
 python scripts/benchmark_vendor.py "<annotated_dir>" <out_dir>    # real images with scanner traces
 python scripts/benchmark_real.py <out_dir> <dicom_dir> [...]      # real images, unsupervised
+python scripts/benchmark_avc.py <out_dir> <dicom_dir> [...]       # valve clicks / aortic valve closure
 python scripts/make_report.py <out_dir>                           # REPORT.md + figures
 ```
+
+## Review images
+
+```bash
+python scripts/overlay_review.py <dicom_dir> <out_dir>
+```
+
+One PNG per DICOM: the full frame as displayed with `v_max` / `v_min`, the extracted ECG, R-peaks,
+valve clicks and aortic valve closure drawn on top, and below it a column-aligned copy of the ECG and
+spectrum strip with brightness normalised for visibility (display only; TDI redrawn with a copper map)
+and the same overlay (`dicom2waveform.plot.plot_overlay`). These images show patient details: keep them
+inside the institution.
 
 ## Development
 
@@ -77,3 +97,6 @@ known envelopes, ECG and artefacts. Tests on real example DICOMs run when the fo
 
 **Patient data:** the example images contain burned-in identifiers. Never commit DICOMs, full-frame
 renderings or QC figures (`.gitignore` excludes images and results).
+
+`configs/default.yaml` is generated from `config.py` (`python scripts/write_default_config.py`);
+a test fails when it is out of date.

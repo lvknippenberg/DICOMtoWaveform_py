@@ -43,8 +43,18 @@ class RenderConfig:
     text_ring_max: float = 70.0
     # Valve clicks: column-mean transients above click_min_snr robust SDs over a
     # moving median of click_background_s, at most click_max_width_s wide.
-    suppress_clicks: bool = True
-    click_min_snr: float = 6.0
+    # click_mode: 'keep' (default) keeps them without special treatment, so the
+    # envelope traces the displayed spectrum including the click (chosen by the
+    # user on the cardiac examples, 2026-10-05: the envelope should trace the
+    # spectrum as displayed); 'bridge' replaces click columns by interpolation so
+    # the envelope ignores them (a click is the valve leaflet, not blood flow);
+    # 'follow' keeps them and lets the DP envelope jump to them; 'off' disables
+    # detection. Click times are reported (t_clicks, t_avc) in every mode except 'off'.
+    click_mode: str = "keep"
+    # 'bridge'/'follow' apply to these modalities; others use 'keep'. On TDI,
+    # narrow transients are mostly tissue motion (IVC/IVR spikes), not clicks.
+    click_bridge_modalities: tuple[str, ...] = ("PW", "CW")
+    click_min_snr: float = 12.0
     click_background_s: float = 0.15
     click_max_width_s: float = 0.035
 
@@ -63,6 +73,15 @@ class ECGConfig:
     # Longest gap (s) in the drawn trace that is interpolated (never across the sweep).
     max_gap_s: float = 0.05
     detect_rpeaks: bool = True
+    # Aortic valve closure = strongest valve click in this window after each
+    # R-peak (MATLAB GetAorticValveClosure; closure fell 341-377 ms after R on
+    # the EMW set), rejected within edge_guard_s of the window edges.
+    avc_window_s: tuple[float, float] = (0.20, 0.50)
+    avc_edge_guard_s: float = 0.012
+    # Minimum transient height (robust SDs) inside the gated window (MATLAB: 6),
+    # and the span over which the closure time is centred.
+    avc_min_snr: float = 6.0
+    avc_centroid_s: float = 0.035
     # R-peak detector (port of DetectRpeaks.m)
     qrs_band_hz: tuple[float, float] = (8.0, 30.0)
     refractory_s: float = 0.25
@@ -123,9 +142,40 @@ class DPConfig:
     # the synthetic dev split + vendor traces (see docs/BENCHMARK.md).
     normalise_percentile: float | None = 99.0
     normalise_floor: float = 0.2
-    # Presence of flow on a side: the boundary is placed at the baseline when
-    # the evidence beyond it is below this density.
-    # (Handled by the cost function itself; kept for documentation.)
+    # Local normalisation ("half maximum per column"): additionally normalise
+    # each side's density by its maximum within +-local_norm_s, but never by
+    # less than local_norm_floor (relative to the globally normalised level 1),
+    # so noise is not lifted. Applied only to the listed modalities. On TDI,
+    # faint low-velocity segments are real signal (16-80x more non-black pixels
+    # than motion-free regions in 01_10638) but only 0.2-0.35 of the band
+    # density, so a global edge level drops them. On CW it stretches clutter
+    # columns, hence TDI only. local_norm_s = 0 disables.
+    local_norm_s: float = 0.01
+    local_norm_floor: float = 0.15
+    local_norm_modalities: tuple[str, ...] = ("TDI",)
+    # Edge density for TDI displays (None = edge_density).
+    edge_density_tdi: float | None = None
+    # 'follow' click mode: transitions into/out of click columns are free, so
+    # the edge can jump to the click (set automatically by render.click_mode).
+
+
+@dataclass
+class AliasingConfig:
+    """Automatic per-column baseline shift (aliasing.py)."""
+
+    correct: bool = True
+    # Cut rows must stay this far (fraction of display height) from the zero row.
+    guard_rel: float = 0.10
+    # Smoothing of the density (rows) before choosing the cut.
+    cut_smooth_rows: int = 5
+    # Cost per row of moving the cut away from the display edge (prefers no change).
+    edge_preference: float = 0.002
+    # Smoothness of the cut path (cost per row moved between columns).
+    cut_lambda: float = 0.05
+    # Apply only if the cut path crosses less than this fraction of the signal
+    # density at the display edge, and the edge density exceeds min_edge_density.
+    max_cost_ratio: float = 0.5
+    min_edge_density: float = 0.05
 
 
 @dataclass
@@ -185,6 +235,7 @@ class PipelineConfig:
     mean: MeanConfig = field(default_factory=MeanConfig)
     post: PostConfig = field(default_factory=PostConfig)
     quality: QualityConfig = field(default_factory=QualityConfig)
+    aliasing: AliasingConfig = field(default_factory=AliasingConfig)
     keep_diagnostics: bool = False
 
 
@@ -218,3 +269,20 @@ def load_config(source: str | Path | dict | None = None) -> PipelineConfig:
 
 def config_to_dict(cfg: Any) -> dict[str, Any]:
     return dataclasses.asdict(cfg)
+
+
+def write_config(cfg: Any, path: str | Path, header: str = "") -> None:
+    """Write a configuration as YAML (tuples as lists), loadable by load_config."""
+    import yaml
+
+    def plain(v):
+        if isinstance(v, dict):
+            return {k: plain(x) for k, x in v.items()}
+        if isinstance(v, (list, tuple)):
+            return [plain(x) for x in v]
+        return v
+
+    with open(path, "w", encoding="utf8") as fh:
+        if header:
+            fh.write("".join(f"# {line}\n" for line in header.splitlines()))
+        yaml.safe_dump(plain(config_to_dict(cfg)), fh, sort_keys=False)

@@ -76,6 +76,7 @@ class Context:
     likelihood: LikelihoodConfig = field(default_factory=LikelihoodConfig)
     dp: DPConfig = field(default_factory=DPConfig)
     _noise: NoiseStats | None = None
+    aliasing: dict[str, Any] = field(default_factory=dict)  # set by the pipeline
 
     @property
     def noise(self) -> NoiseStats:

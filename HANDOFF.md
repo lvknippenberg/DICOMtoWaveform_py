@@ -1,6 +1,8 @@
 # DICOMtoWaveform_py — working notes / handoff
 
-State as of **2026-09-29** (first session). Read this first in a new session, then `docs/BENCHMARK.md`.
+State as of **2026-10-05** (session 1 on 2026-09-29, plus a second round on user feedback, "Round 2"
+in `docs/BENCHMARK.md`; session 2 on 2026-10-05: target feature list, click mode, review images; see
+"Target features" below). Read this first in a new session, then `docs/BENCHMARK.md`.
 
 ## Purpose
 
@@ -17,15 +19,17 @@ data), return:
 | `v_mean` | cm/s, intensity-weighted mean velocity **inside the detected flow region** (signed, both halves) |
 | `v_mean_pos` / `v_mean_neg` | same, positive / negative half only |
 
-Plus `t_rpeaks`, per-column confidence, and flags (modality PW/CW/TDI, `aliasing_suspected`,
-`ecg_clipped`, `snr_proxy_db`, ...). Timing between ECG and Doppler events is what downstream
+Plus `t_rpeaks`, `t_clicks` (valve clicks), `t_avc` (aortic valve closure), per-column confidence,
+and flags (modality PW/CW/TDI, `aliasing_suspected`, `aliasing_corrected`, `ecg_clipped`,
+`n_clicks`, `snr_proxy_db`, ...). After aliasing correction `v_max`/`v_min` may exceed the display
+limits (that is the point). Timing between ECG and Doppler events is what downstream
 analysis (a separate repo) uses, as for the MATLAB tool.
 
 ## Status
 
 Everything in `Plan.txt` (the user's plan, `docs/plan/Plan.txt`) plus the review
 (`docs/plan/Plan_review.md`) is implemented, except the annotation GUI (the user chose synthetic data
-+ visual QC instead). The user chose the **full benchmark** scope. 39 pytest tests pass.
++ visual QC instead). The user chose the **full benchmark** scope. 47 pytest tests pass.
 
 - Package `dicom2waveform` (editable install in the env), entry point `extract_waveforms(path)`.
   ~0.2 s per 1024x768 image, ~0.6 s for 1920x1080.
@@ -33,6 +37,31 @@ Everything in `Plan.txt` (the user's plan, `docs/plan/Plan.txt`) plus the review
   synthetic DICOM generator, metrics, benchmark runners, report generator, failure gallery.
 - Benchmark run completed; results in `docs/results/REPORT.md` (copy) and
   `C:\Claude\Doppler\results\report\REPORT.md` (original, with raw CSVs).
+- Clinician review images for the 17 cardiac examples: `C:\Claude\Doppler\review\overlay\`
+  (`scripts/overlay_review.py`; full frame with overlay + a brightness-normalised copy of the
+  spectrum strip with the same overlay). The user plans to have clinicians review them.
+
+## Target features (user, 2026-10-05)
+
+The user annotated what must eventually be extracted from each DICOM:
+`C:\DICOM waveforms\DICOM doppler examples\DICOM doppler examples\Points of interest\` (one PNG per
+example, blue marks, plus `Readme.txt`). Blue dot = a velocity to measure, blue line = a timing
+(start/end of a wave, for temporal windows). The full list will be implemented later.
+
+| Feature | Where | Derivable from | State (checked against the marks) |
+|---|---|---|---|
+| e' and a' peak velocity | TDI (10292, 10364, 10638, 277, 376, 03_10673) | `v_min` | not built; envelope within ~0.2-1 cm/s of most dots |
+| a' onset (for iLAD: P wave -> a') | TDI (line on the baseline) | `v_min`: last return to 0 before the a' peak | not built; +-7 ms in 5/5 |
+| E and A peak velocity | PW mitral (E3Q0C6H6, 10529, L3VHDBZ5) | `v_max` | not built; envelope 2.5 cm/s inside the dots on average (narrow tips cut, open point 3) |
+| Jet peak velocity | CW (E3Q0C6HS, L3VHDS0Z) | `v_min` | not built; envelope ~10 cm/s outside the dots (user marks the dense edge) |
+| Aortic valve closure | CW (L3VHCNLD, 232, 11747, 12485, 14018) | clicks, `t_avc` | built; 4/5 within +-3 ms, 14018 missed (open point 4) |
+| T-wave end (for EMW, with AVC) | ECG, 01_232 | ECG trace | not built |
+| P-wave onset (for iLAD) | ECG | ECG trace | not built |
+
+Notes: labelling E vs A and e' vs a' needs ECG timing (A/a' after P, before R). 03_10673 is in AF
+(e' only; detect AF from RR irregularity, skip a' and P). 01_5012 is very dark (unannotated). Open
+question to the user: iLAD = P onset -> a' onset (as drawn) or -> a' peak (classic PA-TDI)? In
+01_10638 a' onset nearly coincides with P onset.
 
 ## Environment
 
@@ -80,15 +109,20 @@ dicom2waveform/
     postprocess.py median / Savitzky-Golay / Kalman CV-CA (+RTS)
     mean.py        mean envelopes inside the flow region
   quality.py       flow mask, SNR proxy, aliasing (wrap-around) test
+  aliasing.py      aliasing correction: least-signal cut path through the circular display (DP),
+                   rows beyond the cut moved by one Nyquist span -> taller, unwrapped Spectrogram
   pipeline.py      extract_waveforms(), WaveformResult, envelopes_from_spectrogram()
-  plot.py          QC figure (spectral region + ECG strip only)
+  plot.py          QC figure (spectral region + ECG strip only); plot_overlay (full-frame review image
+                   + normalised spectrum panel), normalise_brightness (display only)
   synthetic.py     synthetic DICOM displays with known truth; benchmark_suite()
   evaluation/      metrics.py (pointwise, per-beat, bootstrap, Bland-Altman), benchmark.py (variants,
                    runners for synthetic / vendor-trace / real)
-scripts/           run_examples, benchmark_synthetic, benchmark_vendor, benchmark_real, make_report,
-                   failure_gallery
-tests/             39 tests (DP vs brute force, rendering, pipeline accuracy per modality, R-peaks,
-                   every estimator runs, real examples incl. HR vs DICOM HeartRate tag)
+scripts/           run_examples, benchmark_synthetic, benchmark_vendor, benchmark_real, benchmark_avc,
+                   make_report, failure_gallery, overlay_review, write_default_config
+tests/             47 tests (DP vs brute force, rendering, pipeline accuracy per modality, R-peaks,
+                   every estimator runs, aliasing unwrap both directions, click/AVC timing, click
+                   modes, real examples incl. HR vs DICOM HeartRate tag, default.yaml in sync with
+                   config.py, brightness normalisation)
 ```
 
 ## Key decisions and learnings (with the reasons)
@@ -120,8 +154,10 @@ New in this port:
    grey pixels on colour-map (TDI) displays, baseline colour everywhere if chromatic, **text/ticks** =
    small bright components with a dark surround (saturated flow has a bright surround). Masked pixels
    are filled by vertical interpolation.
-8. **Valve clicks** (broadband transients <= 35 ms in the column mean) are bridged horizontally before
-   estimation. The MATLAB AVC detector used the same cue; clicks here are up to ~28 ms wide.
+8. **Valve clicks** (broadband transients <= 35 ms in the column mean) are reported as events (see
+   Round 2 for the detector). Default `click_mode` changed from 'bridge' to **'keep'** on 2026-10-05 at the
+   user's request: the envelope should trace the spectrum as displayed, clicks included. 'bridge'
+   (interpolate over click columns on PW/CW) and 'follow' remain available.
 9. **TDI copper colour map** -> luminance x 255/160 (brightest copper colour has luminance ~150); noise
    margins are in grey levels.
 10. **ECG**: colour searched in a band of rows (not one row: one EPIQ trace did not cross the B-mode
@@ -131,6 +167,7 @@ New in this port:
     search-back (fixed a missed clipped beat), search-back adds one peak per gap.
 11. **Aliasing flag = wrap-around test** (both edges at their display limits in the same columns). One
     edge alone at its limit is common (mirror/clutter texture on a small side) and is not aliasing.
+    When it fires, the display is unwrapped (Round 2).
 12. **Spectrum methods get a common flow-presence gate** (vertical run of supra-Otsu pixels >= 1.5% of
     the side depth). The published methods assume a known flow direction; without the gate they report
     noise on every no-flow side (ungated variants are kept in the 2-D experiment).
@@ -163,15 +200,22 @@ New in this port:
 
 ## Open points
 
-1. **Edge convention on cardiac CW jets (highest priority).** theta was calibrated on vascular PW vendor
-   traces. On CW jets with a faint high-velocity tail (e.g. `AFTQAAFO`), DP follows the dense core
-   and may under-read peak velocity. Needs cardiac vendor auto-traces (PW, CW, TDI) — asked the user.
+1. **Edge convention per modality (highest priority).** theta was calibrated on vascular PW vendor
+   traces. The user's marks (2026-10-05) pull in opposite directions: on CW the user marks the peak at
+   the dense edge and DP reads ~10 cm/s further out (4 dots); on PW mitral DP sits 2.5 cm/s inside
+   (6 dots). Every global setting that takes in more PW signal pushes CW further out (sweep: edge
+   density 0.35/0.4, noise margin 16/8, density window 5x3, accel x2; density window 5x3 was the best
+   PW candidate: PW MAE 2.8 -> 1.9, vendor 1.92 -> 1.97, CW +10 -> +14). The user accepts separate
+   PW/TDI(/CW) settings but wants more examples first. Cardiac vendor auto-traces would also help.
 2. **Mirror artefacts** (bright mirrored band on the weak side, e.g. PW `L3VHDBZ5`, `E3Q0C6H6` with a
    small negative range) are reported as flow; not flagged. Also open in MATLAB. Need to confirm what
    those bands are before "fixing" (genuine bidirectional flow exists, e.g. FI77VVJW).
-3. **Aliasing** is flagged (`01_10529`) but not unwrapped.
-4. **AVC detection** (aortic valve closure, `t_AVC` in MATLAB) not ported. Click columns are already
-   detected (`spec.info["click_columns"]`) — most of the ingredients exist.
+3. **Narrow, faint peak tips are cut off** (user, `01_10529`: tops of E and A, thin diastolic peaks;
+   also faint TDI tails in `01_5012`). Not a threshold effect (edge density 0.3 barely moves the
+   line): the density window (9 x 5 px) and the acceleration prior remove thin structures.
+4. **AVC threshold**: one marked beat missed (04_14018, strength 5.7 vs `ecg.avc_min_snr` 6.0, at
+   +13 ms from the mark); consider a threshold relative to the other beats of the image. AVC is also
+   computed on TDI, where it is meaningless (hidden in the review images).
 5. **Latham OMM adaptation**: the per-window STFT Otsu (EM selection) is emulated by time-averaging the
    display; published areas are applied after resampling to the paper's 5 ms x 31.25 Hz grid with 512
    rows over the display span (assumption: display span <-> the paper's +-8 kHz).
@@ -191,9 +235,12 @@ New in this port:
 2. Decide on the mirror question with the user (visual review of `L3VHDBZ5`, `E3Q0C6H6`, `AFTQAAFO`),
    then add a mirror flag (e.g. correlation of the weak side's texture with the strong side's
    envelope, reflected about the baseline).
-3. Port AVC detection (MATLAB `GetAorticValveClosure`), reusing `find_clicks`; validate on the EMW set
-   (MATLAB: 38/38 beats, R->AVC 363 +/- 38 ms).
-4. Aliasing correction for PW (shift the wrapped part by the display span when the wrap-around test fires).
+3. Implement the target feature list (section above): per-beat peak picking and labelling (E/A, e'/a',
+   CW jet peak) using ECG timing, a' onset, P-wave onset and T-wave end on the ECG, AF detection.
+   Validate against the blue marks (mark pixels = annotated PNG minus the DICOM pixels, blue
+   components; dot vs line by aspect ratio).
+4. Collect clinician feedback on the review images; then address open points 1 and 3 (per-modality
+   settings, narrow tips) with more PW examples.
 5. Optional: annotation GUI (Plan section 25) if manual cardiac references are wanted.
 6. Packaging: pin dependency versions once the API settles; CI running `pytest` (synthetic tests need
    no data).
@@ -209,4 +256,6 @@ $PY scripts/benchmark_vendor.py "C:/Github/DICOMtoWaveform/Annotated examples" C
 $PY scripts/benchmark_real.py C:/Claude/Doppler/results "<dir1>" "<dir2>" ...
 $PY scripts/make_report.py C:/Claude/Doppler/results   # regenerates REPORT.md (conclusions section is hand-written; re-add)
 $PY scripts/failure_gallery.py C:/Claude/Doppler/results --n 20
+$PY scripts/overlay_review.py "<dicom_dir>" C:/Claude/Doppler/review/overlay   # full-frame review images + brightness-normalised spectrum panel (PHI: institution only)
+$PY scripts/write_default_config.py   # regenerate configs/default.yaml after changing config.py defaults (tests/test_config.py checks it)
 ```

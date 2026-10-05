@@ -34,7 +34,7 @@ REF_SPAN_ROWS = 385  # rows of the common Philips spectral display
 
 def _px(ctx: Context, size_s: float, size_rel: float) -> tuple[int, int]:
     """(rows, cols) for a size given in seconds and in fraction of the velocity span."""
-    H = ctx.spec.level.shape[0]
+    H = ctx.spec.display_height
     rows = max(1, int(round(size_rel * H))) if size_rel > 0 else 1
     cols = max(1, int(round(size_s / ctx.spec.dt))) if size_s > 0 else 1
     return rows, cols
@@ -42,7 +42,7 @@ def _px(ctx: Context, size_s: float, size_rel: float) -> tuple[int, int]:
 
 def _ref_px(ctx: Context, n: int) -> tuple[int, int]:
     """A size of n pixels at the reference display resolution -> (rows, cols) here."""
-    H = ctx.spec.level.shape[0]
+    H = ctx.spec.display_height
     return max(1, int(round(n * H / REF_SPAN_ROWS))), max(1, int(round(n * REF_DT / ctx.spec.dt)))
 
 
@@ -325,7 +325,7 @@ class LathamEstimator(EnvelopeEstimator):
         spec, p = ctx.spec, self.params
         H, W = spec.level.shape
         Wn = max(8, int(round(W * spec.dt / p["col_dt_s"])))
-        Hn = int(p["rows_full_span"])
+        Hn = int(round(p["rows_full_span"] * H / spec.display_height))  # 512 rows per displayed span
         img = spec.level.astype(float).copy()
         img[:, spec.sweep] = 0.0
         R = transform.resize(img, (Hn, Wn), order=1, mode="edge", anti_aliasing=True, preserve_range=True)

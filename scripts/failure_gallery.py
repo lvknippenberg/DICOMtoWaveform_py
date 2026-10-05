@@ -12,7 +12,7 @@ import pandas as pd
 from dicom2waveform import extract_waveforms, load_config
 from dicom2waveform.envelope import BENCHMARK_ORDER, make_estimator
 from dicom2waveform.plot import plot_result
-from dicom2waveform.synthetic import benchmark_suite, generate
+from dicom2waveform.synthetic import benchmark_suite, case_name, generate
 
 
 def main(argv=None):
@@ -24,7 +24,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     res = Path(a.results_dir)
     df = pd.read_csv(res / "synthetic_raw.csv")
-    specs = {f"synthetic:{s.waveform}:{s.modality}:{s.snr_db}:{s.seed}": s for s in benchmark_suite()}
+    specs = {case_name(s): s for s in benchmark_suite()}
     cfg = load_config()
     cfg.keep_diagnostics = True
     for m in a.methods.split(","):

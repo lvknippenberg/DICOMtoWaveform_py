@@ -32,6 +32,7 @@ and was not adopted; curvature is controlled by optional post-smoothing.
 from __future__ import annotations
 
 import numpy as np
+from scipy import ndimage
 
 from .base import Context, EnvelopeEstimate, EnvelopeEstimator, SIDES, side_view
 from .likelihood import density_window, local_density, membership
@@ -157,7 +158,7 @@ class DPEstimator(EnvelopeEstimator):
         scale = self.params["accel_scale_with_range"]
         scale = ctx.dp.accel_scale_with_range if scale is None else scale
         if scale:
-            lo, hi = spec.v_limits
+            lo, hi = spec.display_v_limits
             a_ref = a_ref * max(abs(lo), abs(hi)) / ctx.dp.reference_range_cm_s
         return (abs(spec.dy) / spec.dt) / a_ref
 
@@ -189,21 +190,43 @@ class DPEstimator(EnvelopeEstimator):
             m = np.clip(m / max(top, ctx.dp.normalise_floor), 0.0, 1.0)
         return m
 
+    @staticmethod
+    def local_normalise(d: np.ndarray, sweep: np.ndarray, dt: float, window_s: float, floor: float) -> np.ndarray:
+        """Normalise a side's density by its local maximum over +-window_s (at least
+        `floor`, relative to the globally normalised level 1)."""
+        colmax = d.max(axis=0)
+        colmax[sweep] = 0.0
+        n = max(1, int(round(window_s / dt)))
+        runmax = ndimage.maximum_filter1d(colmax, size=2 * n + 1, mode="nearest")
+        return np.clip(d / np.maximum(runmax, floor)[None, :], 0.0, 1.0)
+
     def estimate(self, ctx: Context) -> EnvelopeEstimate:
         spec = ctx.spec
         L = self.likelihood(ctx)
         lam = self.lambda_rows(ctx)
         free = spec.sweep.copy()
         free[1:] |= spec.sweep[:-1]
+        if spec.click_mode == "follow" and spec.clicks is not None and spec.clicks.any():
+            # let the edge jump into and out of valve clicks
+            free |= spec.clicks
+            free[1:] |= spec.clicks[:-1]
+        theta = ctx.dp.edge_density
+        if spec.modality == "TDI" and ctx.dp.edge_density_tdi is not None:
+            theta = ctx.dp.edge_density_tdi
+        # relative sizes refer to the displayed span, also after unwrapping
+        H = spec.display_height
         out = {}
         for side in SIDES:
             sv = side_view(spec, side, image=L)
-            H = spec.level.shape[0]
+            dens = sv.level
+            if ctx.dp.local_norm_s > 0 and spec.modality in ctx.dp.local_norm_modalities:
+                dens = self.local_normalise(dens, spec.sweep, spec.dt, ctx.dp.local_norm_s,
+                                            ctx.dp.local_norm_floor)
             wall = int(round(ctx.dp.wall_band_rel * H))
             if ctx.dp.cost == "split":
-                cost = split_cost(sv.level, wall_rows=wall)
+                cost = split_cost(dens, wall_rows=wall)
             else:
-                cost = edge_cost(sv.level, theta=ctx.dp.edge_density,
+                cost = edge_cost(dens, theta=theta,
                                  inner_rows=max(1, int(round(ctx.dp.inner_band_rel * H))),
                                  height_prior=ctx.dp.height_prior, wall_rows=wall)
             cost[:, spec.sweep] = 0.0

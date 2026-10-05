@@ -255,6 +255,42 @@ def main(argv=None):
       "SNR axis (the real images' proxies are listed in the QC summaries):\n")
     w(md_table(sp.to_frame("synthetic SNR proxy (dB)"), ".1f"))
 
+    # ------------------------------------------------------------------ aliasing
+    al = syn[syn.modality == "PW_alias"]
+    if len(al):
+        w("\n## 9. Aliasing correction (synthetic PW with flow beyond the Nyquist limit)\n")
+        w("Two plans: a positive E/A pattern past the top of an 85/-34 cm/s display and a negative systolic jet "
+          "past the bottom of a 100/-40 cm/s display; truth = the physical (unwrapped) envelope. The unwrap step "
+          "(aliasing.py) is a framework step applied before every estimator; `dp_no_alias_correction` disables it. "
+          "Median normalised envelope MAE, all seeds.\n")
+        vs = MAIN + ["dp_no_alias_correction"]
+        t = al[al.variant.isin(vs)].pivot_table(index="variant", columns="snr_band", values="env_nmae",
+                                               aggfunc="median", observed=False)
+        t["all"] = al[al.variant.isin(vs)].groupby("variant").env_nmae.median()
+        t["peak_abs_err_cm_s"] = al[al.variant.isin(vs)].groupby("variant")["v_max.peak_abs_err"].median()
+        t.index = [LABEL.get(m, m) for m in t.index]
+        w(md_table(t.sort_values("all")))
+
+    # ------------------------------------------------------------------ clicks / AVC
+    if (res / "avc_raw.csv").exists():
+        av = pd.read_csv(res / "avc_raw.csv")
+        w("\n## 10. Valve clicks and aortic valve closure (real images)\n")
+        w("Valve clicks are narrow (<= 35 ms), broadband, saturated transients: the leaflets, not blood flow. The "
+          "envelopes keep them by default (`render.click_mode = 'keep'`; 'bridge' interpolates over them); their times are reported as `t_clicks`, and "
+          "aortic valve closure `t_avc` = the strongest transient 0.2-0.5 s after each R-peak (MATLAB method; "
+          "EMW reference 38/38 beats, R->AVC 363 +/- 38 ms).\n")
+        per_file = av[av.n_beats_full_window.notna()]
+        det = av[av.r_to_avc_ms.notna()]
+        rows = []
+        for s, g in det.groupby("set"):
+            pf = per_file[per_file.set == s]
+            spread = g.groupby("case").r_to_avc_ms.std().median()
+            rows.append({"set": s, "files": len(pf), "beats (full window)": int(pf.n_beats_full_window.sum()),
+                         "AVC detected": len(g), "R->AVC mean (ms)": g.r_to_avc_ms.mean(),
+                         "R->AVC SD (ms)": g.r_to_avc_ms.std(), "median within-file SD (ms)": spread,
+                         "files without AVC": int((pf.n_avc == 0).sum())})
+        w(md_table(pd.DataFrame(rows).set_index("set"), ".1f"))
+
     (out / "REPORT.md").write_text("\n".join(lines), encoding="utf8")
     print(f"wrote {out / 'REPORT.md'}")
 

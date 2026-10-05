@@ -167,13 +167,18 @@ def generate(spec: SyntheticSpec) -> SyntheticCase:
     t = np.arange(W) * p.dt
     dy = -(p.v_top - p.v_bottom) / (H - 1)
     zero_row = int(round(p.v_top / -dy))
-    v_rows = (np.arange(H) - zero_row) * dy  # velocity of each row
+    v_rows = (np.arange(H) - zero_row) * dy  # velocity of each display row
     comps, phase = _components(p, t, rng)
 
     # --- expected signal power --------------------------------------------
+    # Computed on an extended grid of three display spans (rows -H..2H-1), so
+    # that flow beyond the display limits exists: it is dropped (no aliasing)
+    # or folded back modulo the display span (PW aliasing).
+    rows_ext = np.arange(-H, 2 * H)
+    v_ext = (rows_ext - zero_row) * dy
     Nnoise = 1.0
     A = 10 ** (p.snr_db / 10.0) * Nnoise
-    S = np.zeros((H, W))
+    S = np.zeros((3 * H, W))
     truth = {"v_max": np.zeros(W), "v_min": np.zeros(W)}
     sw_pos = np.zeros(W)
     swv_pos = np.zeros(W)
@@ -186,7 +191,7 @@ def generate(spec: SyntheticSpec) -> SyntheticCase:
             l = 0.35 * u
         else:  # band (TDI): narrow band just inside the edge
             l = np.clip(u - np.maximum(0.25 * u, 0.6), 0, None)
-        speed = sign * v_rows[:, None]  # >0 on this component's side
+        speed = sign * v_ext[:, None]  # >0 on this component's side
         sigma_u = np.maximum(p.broadening * u, 0.6 * abs(dy))[None, :]
         roll_out = 0.5 * special.erfc((speed - u[None, :]) / (np.sqrt(2) * sigma_u))
         roll_in = 0.5 * special.erfc((l[None, :] - speed) / (np.sqrt(2) * np.maximum(sigma_u, abs(dy))))
@@ -204,10 +209,10 @@ def generate(spec: SyntheticSpec) -> SyntheticCase:
         wgt = np.where(inband, A * shape, 0.0)
         if sign > 0:
             sw_pos += wgt.sum(0)
-            swv_pos += (wgt * v_rows[:, None]).sum(0)
+            swv_pos += (wgt * v_ext[:, None]).sum(0)
         else:
             sw_neg += wgt.sum(0)
-            swv_neg += (wgt * v_rows[:, None]).sum(0)
+            swv_neg += (wgt * v_ext[:, None]).sum(0)
     with np.errstate(invalid="ignore", divide="ignore"):
         truth["v_mean_pos"] = np.where(sw_pos > 0, swv_pos / sw_pos, 0.0)
         truth["v_mean_neg"] = np.where(sw_neg > 0, swv_neg / sw_neg, 0.0)
@@ -215,24 +220,11 @@ def generate(spec: SyntheticSpec) -> SyntheticCase:
         truth["v_mean"] = np.where(tot > 0, (swv_pos + swv_neg) / tot, 0.0)
 
     if p.alias:
-        # velocities beyond the top wrap to the bottom (and vice versa)
-        span = H
-        S_wrapped = S.copy()
-        extra = np.zeros_like(S)
-        # recompute power for rows above the display for the positive side
-        above = np.arange(-H // 2, 0)
-        v_above = (above - zero_row) * dy
-        for sign, u in comps:
-            if sign < 0:
-                continue
-            sigma_u = np.maximum(p.broadening * u, 0.6 * abs(dy))[None, :]
-            ro = 0.5 * special.erfc((v_above[:, None] - u[None, :]) / (np.sqrt(2) * sigma_u))
-            l = 0.35 * u if p.fill == "hollow" else np.zeros(W)
-            ri = (v_above[:, None] >= l[None, :])
-            extra_rows = A * 0.5 * ro * ri * (u[None, :] > 0)
-            dest = above + span
-            extra[dest] += extra_rows
-        S = S_wrapped + extra
+        # PW aliasing: the displayed spectrum is periodic with the display span
+        # (H rows); flow beyond one limit re-enters at the other
+        S = S[:H] + S[H:2 * H] + S[2 * H:]
+    else:
+        S = S[H:2 * H]
     if p.mirror_db > 0:
         # mirror about the zero row
         mir = np.zeros_like(S)
@@ -279,17 +271,21 @@ def generate(spec: SyntheticSpec) -> SyntheticCase:
         for _ in range(p.speckles):
             cy, cx = rng.integers(0, H), rng.integers(0, W)
             level[max(0, cy - 2):cy + 2, max(0, cx - 1):cx + 1] = 230
-    if p.clicks:
-        rr = 60.0 / p.heart_rate
-        for tc in np.arange(rng.uniform(0.3, 0.6) * rr, p.duration_s, rr):
-            c = int(tc / p.dt)
-            if c < W:
-                level[:, c:c + 2] = np.maximum(level[:, c:c + 2], 245)
-
     # --- ECG ----------------------------------------------------------------
     rr = 60.0 / p.heart_rate
     r_times = np.arange(rng.uniform(0.1, rr), p.duration_s, rr)
     ecg = _ecg_template(t, r_times)
+
+    # valve clicks ~20 ms wide at aortic valve closure (R + 0.38 RR, i.e. within
+    # the 0.2-0.5 s AVC window at 50-110 bpm)
+    t_clicks = np.array([])
+    if p.clicks:
+        t_clicks = r_times + 0.38 * rr
+        t_clicks = t_clicks[t_clicks < p.duration_s - 0.02]
+        n = max(2, int(round(0.02 / p.dt)))
+        for tc in t_clicks:
+            c = int(round(tc / p.dt)) - n // 2
+            level[:, max(0, c):c + n] = np.maximum(level[:, max(0, c):c + n], 245)
 
     # --- sweep: the first n samples (time order) are being overwritten --------
     n_sweep = 8 if p.sweep else 0
@@ -345,7 +341,7 @@ def generate(spec: SyntheticSpec) -> SyntheticCase:
         Region(x0=x0, y0=y0, x1=x0 + W - 1, y1=y0 + H - 1, dx=p.dt, dy=dy, units_x=4, units_y=7,
                data_type=4 if p.modality == "CW" else 3, spatial_format=3, ref_x0=0, ref_y0=zero_row),
     ]
-    dimg = DicomImage(path=f"synthetic:{p.waveform}:{p.modality}:{p.snr_db}:{p.seed}", pixels=disp,
+    dimg = DicomImage(path=case_name(p), pixels=disp,
                       photometric="RGB", regions=regions, meta={"synthetic": True})
     truth["t"] = t
     truth["valid"] = time_valid
@@ -353,7 +349,12 @@ def generate(spec: SyntheticSpec) -> SyntheticCase:
     for key in ("v_max", "v_min", "v_mean", "v_mean_pos", "v_mean_neg"):
         truth[key] = np.where(time_valid, truth[key], np.nan)
     return SyntheticCase(image=dimg, params=p, truth=truth, t_rpeaks=r_times,
-                         info={"zero_row": zero_row, "dy": dy, "p0": p0})
+                         info={"zero_row": zero_row, "dy": dy, "p0": p0, "t_clicks": t_clicks})
+
+
+def case_name(p: SyntheticSpec) -> str:
+    """Unique name of a synthetic case (also its DicomImage.path)."""
+    return f"synthetic:{p.waveform}:{p.modality}{'-alias' if p.alias else ''}:{p.snr_db}:{p.seed}"
 
 
 def benchmark_suite(snrs=(-3, 0, 3, 6, 10, 15, 20, 30), seeds=(0, 1), artefacts: bool = True) -> list[SyntheticSpec]:
@@ -386,4 +387,22 @@ def benchmark_suite(snrs=(-3, 0, 3, 6, 10, 15, 20, 30), seeds=(0, 1), artefacts:
                         s.broadening = float(rng.uniform(0.02, 0.08))
                         s.reject_db = float(rng.uniform(0, 6))
                     specs.append(s)
+    # PW aliasing: flow beyond the Nyquist limit wraps around the display.
+    # Positive E/A pattern past the top of a baseline-shifted display (as in
+    # 01_10529), and a negative systolic jet past the bottom.
+    alias_plans = [("two_peaks", 100.0, 85.0, -34.0), ("systolic", 75.0, 100.0, -40.0)]
+    for wf, vp, top, bot in alias_plans:
+        for snr in snrs:
+            for seed in seeds:
+                rng = np.random.default_rng(zlib.crc32(repr(("PW_alias", wf, snr, seed)).encode()))
+                s = SyntheticSpec(waveform=wf, modality="PW", snr_db=float(snr), seed=int(seed),
+                                  peak_velocity=vp, v_top=top, v_bottom=bot, alias=True,
+                                  heart_rate=float(rng.uniform(55, 95)),
+                                  dt=0.003521 if seed % 2 == 0 else 0.002641)
+                if artefacts:
+                    s.holes = int(rng.integers(0, 4))
+                    s.speckles = int(rng.integers(0, 20))
+                    s.broadening = float(rng.uniform(0.02, 0.08))
+                    s.reject_db = float(rng.uniform(0, 6))
+                specs.append(s)
     return specs

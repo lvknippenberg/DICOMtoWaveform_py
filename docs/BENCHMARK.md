@@ -36,7 +36,8 @@ synthetic cases and the vendor-traced images, so they are not strictly pre-regis
 | dp | soft membership, density, background correction + normalisation, DP outer edge | image | this work (extends the MATLAB DP) |
 
 Common framework steps applied to all methods: header calibration, overlay masking, colour-map
-conversion, click bridging, sweep handling. For the spectrum methods, a common **flow-presence gate**
+conversion, click bridging (PW/CW only), sweep handling, and (round 2) aliasing unwrapping on PW/TDI
+when the wrap-around test fires (`aliasing.py`; the detection always uses the DP edges). For the spectrum methods, a common **flow-presence gate**
 per side (a vertical run of supra-Otsu pixels of at least 1.5% of the side depth) is on by default. The
 published methods assume a spectrum with known flow direction; without the gate every no-flow side of
 a bidirectional display would be reported as noise. Ungated variants are reported in the 2-D
@@ -44,9 +45,11 @@ experiment. Spectrum methods de-compress the display level with an assumed 40 dB
 
 ## Data
 
-1. **Synthetic suite** (`dicom2waveform.synthetic.benchmark_suite`). 12 waveform/modality plans
-   (PW: 6, CW: 4, TDI: 2) x 8 SNRs (-3 to 30 dB) x 2 seeds = 192 complete rendered DICOM displays, with
-   clutter, mirror, clicks, holes, speckles, overlays, sweep and ECG. Seed 0 = **dev split**, seed 1 =
+1. **Synthetic suite** (`dicom2waveform.synthetic.benchmark_suite`). 14 waveform/modality plans
+   (PW: 6, CW: 4, TDI: 2, PW with aliasing: 2) x 8 SNRs (-3 to 30 dB) x 2 seeds = 224 complete rendered
+   DICOM displays, with clutter, mirror, clicks (at R + 0.38 RR), holes, speckles, overlays, sweep and
+   ECG. The spectrum is computed on a grid of three display spans and folded modulo the span for the
+   aliasing plans (truth = unwrapped physical envelope). Seed 0 = **dev split**, seed 1 =
    **held-out test split**; different seeds also use the two sweep speeds (3.52 / 2.64 ms per column).
    Truth: physical outer band edge (v_max, v_min) and power-weighted mean velocities.
 2. **Vendor-traced real images**: 5 vascular Philips iU22 images with the scanner's own envelope trace
@@ -65,6 +68,16 @@ chosen with data:
 - `normalise_percentile` = 99: normalising the density by its 99th percentile, chosen on the
   **synthetic dev split** together with the vendor images. It leaves the vendor result unchanged and
   removes the failure on sparse (speckled) TDI bands.
+
+Round 2 (user feedback on four images) added choices made on the **real example images**, not on the
+benchmark:
+- `render.click_min_snr` = 12 (top-hat strength): visible clicks scored 12.6-49, speckle transients 6-11
+  on the four CW/PW images inspected. `ecg.avc_min_snr` = 6 inside the R-gated window, as in MATLAB.
+- `dp.local_norm_*` (per-column half-maximum, TDI only): faint TDI segments in `01_10638` measured as
+  real signal (16-80x more non-black pixels than motion-free regions) at 0.2-0.35 of the band density;
+  on CW the same step stretched clutter columns, hence TDI only.
+- Aliasing parameters (`AliasingConfig`) are a-priori defaults, verified on `01_10529` and on the
+  synthetic aliasing cases.
 
 The synthetic test split was not used for any choice. Development itself (e.g. finding that the MATLAB
 split cost fails on hollow PW/TDI spectra) used individual synthetic cases outside the suite and the
@@ -91,10 +104,9 @@ helpers, are in `dicom2waveform.evaluation.metrics`.
 - **Header calibration over pixel detection** (MATLAB learnings 2-5): region by unit codes,
   zero row from `ReferencePixelY0`, 0-based coordinates, both signs of `PhysicalDeltaY`.
 
-## Results
+## Results, round 1 (first benchmark run, before the round-2 changes)
 
-See REPORT.md (generated). Summary of the 2026-09-29 run:
-
+Kept for the record; `docs/results/REPORT.md` holds the current numbers (round 2 summary below).
 
 
 **Which estimator is most accurate?** The DP method, on both references:
@@ -129,4 +141,4 @@ Soft vs hard membership barely matters once the density is normalised. The weigh
 - The synthetic truth is my own rendering model.
 - The only real ground truth is 5 vascular PW images. The edge convention on cardiac CW jets (dense core vs faint tail) is not validated.
 - Mirror artefacts are reported as flow.
-- Aliasing is flagged but not corrected.
+- Aliasing was flagged but not corrected (corrected in round 2).

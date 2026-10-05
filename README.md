@@ -72,6 +72,12 @@ python scripts/benchmark_avc.py <out_dir> <dicom_dir> [...]       # valve clicks
 python scripts/make_report.py <out_dir>                           # REPORT.md + figures
 ```
 
+## Target features
+
+`docs/FEATURES.md` lists, per recording type (TDI, mitral inflow, CW), the features to be extracted
+(e′/a′, E/A, jet peak velocity, aortic valve closure, P onset, T end, EMW, ...) with definitions and
+clinical context. Not all are implemented yet.
+
 ## Review images
 
 ```bash

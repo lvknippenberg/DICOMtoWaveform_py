@@ -47,6 +47,7 @@ The user annotated what must eventually be extracted from each DICOM:
 `C:\DICOM waveforms\DICOM doppler examples\DICOM doppler examples\Points of interest\` (one PNG per
 example, blue marks, plus `Readme.txt`). Blue dot = a velocity to measure, blue line = a timing
 (start/end of a wave, for temporal windows). The full list will be implemented later.
+Definitions and clinical context per recording type: `docs/FEATURES.md`.
 
 | Feature | Where | Derivable from | State (checked against the marks) |
 |---|---|---|---|

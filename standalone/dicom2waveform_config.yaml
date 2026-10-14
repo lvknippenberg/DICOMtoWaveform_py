@@ -1,0 +1,212 @@
+# Configuration for dicom2waveform_standalone.py
+#
+# Every value below is the built-in default, so this file is optional. To change a setting,
+# keep only the keys you want to change (any nesting level); missing keys keep their default.
+#   python dicom2waveform_standalone.py file.dcm --config dicom2waveform_config.yaml
+#   extract_waveforms("file.dcm", "dicom2waveform_config.yaml")
+#   extract_waveforms("file.dcm", {"dp": {"edge_density": 0.4}})     # same, as a dict
+#
+# Physical extents are given in s, cm/s or cm/s^2 where possible and converted to pixels per
+# image (pixel sizes differ ~30x in velocity between TDI and CW and ~1.3x in time between
+# sweep speeds). "px" means pixels of the stored image.
+#
+# The settings most worth tuning are marked [TUNE]. The rest are rendering details of the
+# scanner display (tested on Philips iE33, EPIQ CVx, Affiniti 70C, iU22) and rarely need changes.
+
+# Frame to read from a multi-frame DICOM (0 = first).
+frame: 0
+
+# ---------------------------------------------------------------------------------------------
+# render: from the rendered spectral display to a clean scalar intensity image
+# ---------------------------------------------------------------------------------------------
+render:
+  # Pixels whose RGB channels differ by more than this (grey levels) count as "chromatic".
+  # On grey displays chromatic pixels are overlays (ECG, markers, cursors) and are masked.
+  chroma_threshold: 12
+  # If more than this fraction of the non-black, non-overlay pixels is chromatic, the display
+  # is a colour map (TDI copper map) and is converted by luminance instead of grey level.
+  colormap_fraction: 0.5
+  # Rows either side of the header's zero-velocity row searched for the drawn baseline.
+  baseline_search_rows: 6
+  # A run of columns without the drawn baseline at least this wide (px) is the sweep: the write
+  # position of the circular display buffer. It holds no data and is returned as NaN.
+  min_sweep_width_px: 3
+  # Rotate all outputs so samples run oldest -> newest (monotonic time). false = display order.
+  align_to_sweep: true
+  # Colour tolerance (max abs channel difference) when matching overlay colours (baseline).
+  overlay_colour_tolerance: 6
+  # White text / scale ticks inside the region are masked: connected components of pixels with
+  # level >= text_level, at most text_max_area px, whose surroundings average <= text_ring_max.
+  # (Saturated flow and valve clicks also reach white, but have a bright surround.)
+  text_level: 240.0
+  text_max_area: 600
+  text_ring_max: 70.0
+  # [TUNE] Valve clicks (short broadband vertical lines: the leaflets, not blood flow):
+  #   keep   - envelope traces the displayed spectrum including the clicks (default)
+  #   bridge - click columns are interpolated over, so the envelope ignores them
+  #   follow - clicks kept, and the envelope may jump to them without smoothness penalty
+  #   off    - no click detection at all (then also no t_clicks and no t_avc)
+  # Click times (t_clicks) and aortic valve closure (t_avc) are reported in every mode but 'off'.
+  click_mode: keep
+  # 'bridge' / 'follow' apply only to these modalities; others fall back to 'keep'. On TDI,
+  # narrow transients are mostly tissue motion (IVC/IVR spikes), which must be kept.
+  click_bridge_modalities: [PW, CW]
+  # A click is a column-mean transient at least click_min_snr robust SDs high (top-hat
+  # filtered), at most click_max_width_s wide.
+  click_min_snr: 12.0
+  click_max_width_s: 0.035
+
+# ---------------------------------------------------------------------------------------------
+# ecg: tracing the burned-in ECG, R-peaks, aortic valve closure
+# ---------------------------------------------------------------------------------------------
+ecg:
+  # The ECG is searched in a band of rows from search_above_px above the lower edge of the
+  # B-mode region down to search_margin_px into the Doppler region.
+  search_margin_px: 100
+  search_above_px: 120
+  # Colour tolerance when matching the ECG trace colour.
+  colour_tolerance: 6
+  # Trace pieces narrower than this fraction of the region width are dropped (unless they lie
+  # within the vertical band of the main trace on colour images).
+  min_component_width_frac: 0.03
+  # Longest gap (s) in the drawn trace that is interpolated (never across the sweep).
+  max_gap_s: 0.05
+  # Run the R-peak detector.
+  detect_rpeaks: true
+  # [TUNE] Aortic valve closure (AVC) = strongest valve click in this window (s) after each
+  # R-peak (closure fell 341-377 ms after R on the validation set) ...
+  avc_window_s: [0.2, 0.5]
+  # ... not within this distance (s) of the window edges ...
+  avc_edge_guard_s: 0.012
+  # ... at least this many robust SDs high (lower than click_min_snr: the R-gating makes that
+  # safe). One true closure at 5.7 was missed with 6.0; lowering it risks false closures ...
+  avc_min_snr: 6.0
+  # ... timed at the half-maximum centroid over this span (s).
+  avc_centroid_s: 0.035
+  # R-peak detector (Pan-Tompkins style on QRS-band energy). The 8 Hz low edge is a
+  # compromise: 5 Hz passed tall T-waves, 10 Hz dropped wide/premature beats.
+  qrs_band_hz: [8.0, 30.0]
+  # Minimum distance between beats (s).
+  refractory_s: 0.25
+  # Moving-average window of the QRS energy (s).
+  energy_smooth_s: 0.1
+  # Peak threshold as a fraction of the typical QRS energy (upper-half median of candidates).
+  thresh_fraction: 0.35
+  # Noise floor as a fraction of the typical QRS energy (search-back uses half of it).
+  noise_floor_fraction: 0.15
+  # Search back for a missed beat in RR gaps longer than this times the expected RR
+  # (expected RR from the DICOM HeartRate tag if present, else the median RR).
+  searchback_gap_ratio: 1.66
+  # T-wave guard: a peak this fraction of RR after the previous beat ...
+  twave_rr_fraction: [0.2, 0.55]
+  # ... and lower than this fraction of the previous and of the median peak is dropped.
+  twave_relative_height: 0.5
+
+# ---------------------------------------------------------------------------------------------
+# likelihood: noise-referenced soft signal membership and its local density
+# ---------------------------------------------------------------------------------------------
+likelihood:
+  # Signal threshold = noise median + max(noise_margin, noise_spread_factor * robust SD of the
+  # noise), capped at the Otsu threshold. Membership ramps 0 -> 1 from just above the noise
+  # (median + soft_low_factor * SD) to that threshold, so faint flow counts partially.
+  # Lower noise_margin = more faint signal included (grey levels).
+  noise_margin: 32.0
+  noise_spread_factor: 4.0
+  soft_low_factor: 1.5
+  # [TUNE] Window over which membership is averaged into a local density. Given in cm/s / s if
+  # > 0, otherwise in pixels (rows x columns). A smaller window keeps narrow, faint peak tips
+  # (5 x 3 px was better on PW mitral E/A peaks, but pushes CW envelopes further out).
+  density_window_cm_s: 0.0
+  density_window_px_rows: 9
+  density_window_s: 0.0
+  density_window_px_cols: 5
+
+# ---------------------------------------------------------------------------------------------
+# dp: outer envelope by dynamic programming (globally optimal smooth edge per side)
+# ---------------------------------------------------------------------------------------------
+dp:
+  # [TUNE] Smoothness prior: acceleration (cm/s^2) at which moving the edge costs as much as one
+  # misclassified pixel. Lower = smoother envelope, but may clip steep systolic upstrokes.
+  reference_accel_cm_s2: 640.0
+  # Scale reference_accel_cm_s2 with the velocity range of the display (relative to
+  # reference_range_cm_s), so high-range CW displays are not over-smoothed.
+  accel_scale_with_range: true
+  reference_range_cm_s: 100.0
+  # [TUNE] The main envelope setting: the edge is placed where the local signal density drops to
+  # this fraction of the typical in-flow density. Lower = edge further out on the faint fringe.
+  # 0.5 was chosen by leave-one-image-out on vendor-traced vascular images (MAE ~2 cm/s).
+  # Against cardiac annotations it sits ~2.5 cm/s inside on PW and ~10 cm/s outside on CW.
+  edge_density: 0.5
+  # Separate edge density for TDI displays (null = use edge_density).
+  edge_density_tdi: null
+  # Rows just inside the edge (fraction of display height) that must hold signal.
+  inner_band_rel: 0.05
+  # Weak prior toward "no flow" (cost per row of edge height).
+  height_prior: 0.01
+  # Band next to the baseline (fraction of display height) treated as the wall-filter zone:
+  # nearly free to include; an edge inside it is reported as 0 (no flow on that side).
+  wall_band_rel: 0.03
+  # Percentile of the density taken as the noise background and subtracted (null/0 = off).
+  # Without it, uniform noise pulls the edge out to the display limit.
+  background_percentile: 50.0
+  # Normalise the density by this percentile (the typical in-flow density), at least
+  # normalise_floor (null/0 = off). Lets one edge_density serve dense (CW, vascular) and
+  # sparse (speckled TDI) renderings.
+  normalise_percentile: 99.0
+  normalise_floor: 0.2
+  # Local normalisation ("half maximum per column"): additionally divide each side's density by
+  # its maximum within +-local_norm_s (s), but never by less than local_norm_floor. Keeps faint
+  # low-velocity TDI segments. Applied only to local_norm_modalities; 0 disables.
+  local_norm_s: 0.01
+  local_norm_floor: 0.15
+  local_norm_modalities: [TDI]
+
+# ---------------------------------------------------------------------------------------------
+# aliasing: PW / TDI wrap-around detection and automatic per-column baseline shift
+# ---------------------------------------------------------------------------------------------
+aliasing:
+  # Correct detected aliasing (v_max / v_min may then exceed the display limits).
+  # false = only flag it (flags.aliasing_suspected).
+  correct: true
+  # Detection: aliasing is suspected when, in more than alias_min_fraction of the data columns,
+  # both outer edges are within alias_edge_fraction of their display limits.
+  alias_edge_fraction: 0.02
+  alias_min_fraction: 0.01
+  # Correction: a least-signal cut path through the circular display; rows beyond it move by
+  # one display span. The cut stays at least guard_rel (fraction of height) from the baseline ...
+  guard_rel: 0.1
+  # ... the density is smoothed over cut_smooth_rows rows first ...
+  cut_smooth_rows: 5
+  # ... moving the cut away from the display edge costs edge_preference per row ...
+  edge_preference: 0.002
+  # ... the cut path costs cut_lambda per row moved between columns ...
+  cut_lambda: 0.05
+  # ... and it is applied only if the cut crosses less than max_cost_ratio of the signal density
+  # at the display edge, and that edge density exceeds min_edge_density.
+  max_cost_ratio: 0.5
+  min_edge_density: 0.05
+
+# ---------------------------------------------------------------------------------------------
+# mean: mean velocity envelopes inside the detected flow region
+# ---------------------------------------------------------------------------------------------
+mean:
+  # Pixel weights: 'power' (de-compressed display level, proxy of the power-weighted mean
+  # velocity), 'level' (display level minus noise) or 'membership' (soft membership).
+  weighting: power
+  # Assumed dynamic range (dB) spanned by grey levels 0..255, to undo log compression for
+  # 'power' weighting and the SNR proxy. Not stored in the DICOM.
+  dynamic_range_db: 40.0
+  # Band around the baseline (cm/s, each side) excluded from the means (wall filter / clutter).
+  clutter_band_cm_s: 0.0
+  # Minimum number of pixels in a column side for a side mean; otherwise 0 (no flow).
+  min_pixels: 2
+
+# ---------------------------------------------------------------------------------------------
+# post: optional smoothing of v_max / v_min (in time order, never across the sweep)
+# ---------------------------------------------------------------------------------------------
+post:
+  # 'none', 'median' or 'savgol' (Savitzky-Golay). The DP already enforces smoothness.
+  method: none
+  median_window_s: 0.015
+  savgol_window_s: 0.025
+  savgol_order: 2

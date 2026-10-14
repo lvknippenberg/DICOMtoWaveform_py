@@ -74,7 +74,16 @@ question to the user: iLAD = P onset -> a' onset (as drawn) or -> a' peak (class
   `C:\Claude\Doppler` — `Plan.txt`, `Plan_review.md`, `qc/`, `results/` (one results PNG per example
   DICOM + `csv/`, benchmark CSVs, `report/`), `Kathpalia/` and `Latham/` (paper PDFs the user supplied).
 - Not installed: node, poppler (the Read tool cannot render PDFs; use `pypdf` for text, and
-  `page.images` to extract embedded figures, e.g. Latham Fig. 5 pseudocode).
+  `page.images` to extract embedded figures, e.g. Latham Fig. 5 pseudocode; `pymupdf` is installed in
+  DopplerUS to render PDF pages to PNG).
+- LaTeX: Tectonic in its own conda env `envs\tectonic` (conda-forge only; installing it into DopplerUS
+  mixed channels and failed with a DLL entry-point error, so that was reverted). Run
+  `envs\tectonic\Library\bin\tectonic.exe report.tex` with that env's `Library\bin` on PATH.
+- Methods report for co-workers (2026-10-13): `docs/report/report.tex` (+ `make_figures.py`, which runs the
+  standalone script). Figures and PDF include crops of clinical images and are gitignored (`*.pdf`).
+- External-validation envs (2026-10-13): `envs\echonet` (Python 3.10, PyTorch 2.3.1 CPU; 2.4 fails on the missing
+  `libomp140.x86_64.dll`) for EchoNet-Measurements, `envs\echoxflow` (Python 3.13) for the EchoXFlow loader.
+  External code/data in `C:\Claude\Doppler\external` (EchoNet repo + Doppler weights 1.3 GB; EchoXFlow subset ~20 GB).
 - Do not name a script `inspect.py` (it shadows the stdlib module and breaks numpy import).
 
 ## Data
@@ -120,6 +129,14 @@ dicom2waveform/
                    runners for synthetic / vendor-trace / real)
 scripts/           run_examples, benchmark_synthetic, benchmark_vendor, benchmark_real, benchmark_avc,
                    make_report, failure_gallery, overlay_review, write_default_config
+scripts/external_validation/  EchoNet-Measurements and EchoXFlow validation (docs/VALIDATION.md); absolute paths
+                   to the working folder and external data
+standalone/        single-file copy of the production path (DP only, no benchmark code) for sharing
+                   with co-workers + documented dicom2waveform_config.yaml (2026-10-13). Output was
+                   identical to the package on all 49 example DICOMs (defaults and overrides). Not
+                   generated: changes to the package's DP / ECG / render code must be copied by hand.
+                   Differences: the 2 aliasing-detection keys sit under `aliasing:` (not `quality:`),
+                   no Kalman smoothing, no estimator choice.
 tests/             47 tests (DP vs brute force, rendering, pipeline accuracy per modality, R-peaks,
                    every estimator runs, aliasing unwrap both directions, click/AVC timing, click
                    modes, real examples incl. HR vs DICOM HeartRate tag, default.yaml in sync with
@@ -199,6 +216,25 @@ New in this port:
 - Real cardiac images (44): ECG + R-peaks found in all; HR equals the DICOM `HeartRate` tag within
   1 bpm in all 11 files that have it.
 
+## External validation (2026-10-13/14; details in docs/VALIDATION.md, scripts in scripts/external_validation/)
+
+- **EchoNet-Measurements** (public weights, `github.com/echonet/measurements`, env `envs\echonet`, CPU torch 2.3.1)
+  on our 1024x768 DICOMs vs the user's marks: e' MAE ~0.9-1.2 cm/s for both EchoNet and DP; E/A 4-7 cm/s both;
+  CW (TR) jets: DP +15, EchoNet `trvmax` +33 cm/s outside the user's marks. EchoNet gives one point per image.
+  Aortic CW of the AVC sets: DP - EchoNet AV Vmax -15 +- 32 cm/s (n = 22, r 0.85).
+- **EchoXFlow** (GE Vivid E95, 46-exam 19.5 GB subset in `C:\Claude\Doppler\external\echoxflow`, env
+  `envs\echoxflow`): spectral matrices rendered to Philips geometry + display mapping (black P70); 126 clinician
+  traces: PW median MAE 8.7 cm/s (9 %), CW 12.6 cm/s (7 %), r 0.97-0.98; TDI e' DP +2 cm/s; TR Vmax DP -77 cm/s
+  (GE clinicians mark the faint tail). **Dataset bug found**: CW annotations are relative to the display baseline
+  (`baseline_frac`), the matrix axis to `spectral_row_baseline_frac`; add (row_frac - display_frac) x 2 x Nyquist.
+- **Head-to-head on EchoXFlow** (both read the same synthetic 1024x768 DICOM; per-recording vs the clinician
+  measurement; EchoNet automatic, DP read at the marked beats): DP better or equal for e' (lat 2.1 vs 1.9, sept
+  1.8 vs 2.5 cm/s, n.s.), A (10.9 vs 15.2, p 0.06), LVOT Vmax (11.3 vs 17.5, p 0.11), AV Vmax (26.4 vs 38.1,
+  p 0.03); EchoNet better for TR Vmax (39 vs 81, p < 0.001). EchoNet picks a marked beat in only 14-48 %.
+- Conclusion for open point 1: the edge convention differs per measurement and per reader (user: CW dense edge;
+  GE clinicians: TR faint tail, e' inside the outer edge). EchoXFlow traces/marks are a usable cardiac reference
+  for per-measurement tuning (leave-one-exam-out).
+
 ## Open points
 
 1. **Edge convention per modality (highest priority).** theta was calibrated on vascular PW vendor
@@ -230,9 +266,10 @@ New in this port:
 
 ## Next steps (suggested order)
 
-1. Get cardiac images with the scanner's auto-trace (PW, CW, TDI); run `scripts/benchmark_vendor.py`
-   on them (trace colour may differ: `VENDOR_TRACE_RGB` in `evaluation/benchmark.py`); re-tune
-   `dp.edge_density` (possibly per modality) by leave-one-image-out; update the report.
+1. Re-tune `dp.edge_density` per measurement (e', s', E/A, LVOT, AV, TR) by leave-one-exam-out on the EchoXFlow
+   traces and marks (`scripts/external_validation/score_echoxflow.py`; 46 exams already downloaded), then check
+   against the user's own marks (they follow a different convention on CW). Cardiac Philips images with the
+   scanner's auto-trace would still help (`scripts/benchmark_vendor.py`).
 2. Decide on the mirror question with the user (visual review of `L3VHDBZ5`, `E3Q0C6H6`, `AFTQAAFO`),
    then add a mirror flag (e.g. correlation of the weak side's texture with the strong side's
    envelope, reflected about the baseline).

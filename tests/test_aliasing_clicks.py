@@ -46,31 +46,25 @@ def test_no_unwrap_without_aliasing(cases):
     assert not res.flags["aliasing_corrected"]
 
 
-def test_clicks_and_avc():
+def test_avc():
     case = generate(SyntheticSpec(waveform="systolic", modality="CW", snr_db=20, seed=5, peak_velocity=250,
                                   v_top=150, v_bottom=-450, clicks=True))
     res = extract_waveforms(case.image)
     truth = case.info["t_clicks"]
     assert len(truth) >= 2
-    # every true click is reported, within 10 ms
-    for tc in truth:
-        assert np.min(np.abs(res.t_clicks - tc)) < 0.01
     # AVC: one per beat where the click falls in the 0.2-0.5 s window after R
     assert len(res.t_avc) >= len(truth) - 1
     for a in res.t_avc:
         assert np.min(np.abs(truth - a)) < 0.01
-    # bridged: the envelope does not jump to the (saturated, broadband) click
-    bridged = extract_waveforms(case.image, load_config({"render": {"click_mode": "bridge"}}))
-    i = np.argmin(np.abs(bridged.t - truth[0]))
-    assert bridged.v_max[i] < 0.5 * case.params.v_top
+    off = extract_waveforms(case.image, load_config({"ecg": {"detect_avc": False}}))
+    assert len(off.t_avc) == 0
+    # the envelope traces the (saturated, broadband) click as displayed
+    i = np.argmin(np.abs(res.t - truth[0]))
+    assert res.v_max[i] > 0.5 * case.params.v_top
 
 
-def test_click_modes():
-    case = generate(SyntheticSpec(waveform="systolic", modality="CW", snr_db=20, seed=5, peak_velocity=250,
-                                  v_top=150, v_bottom=-450, clicks=True))
-    i = int(np.argmin(np.abs(np.arange(len(case.truth["t"])) * case.params.dt - case.info["t_clicks"][0])))
-    follow = extract_waveforms(case.image, load_config({"render": {"click_mode": "follow"}}))
-    bridge = extract_waveforms(case.image, load_config({"render": {"click_mode": "bridge"}}))
-    assert follow.v_max[i] > bridge.v_max[i] + 20  # 'follow' lets the envelope reach up the click
-    off = extract_waveforms(case.image, load_config({"render": {"click_mode": "off"}}))
-    assert len(off.t_clicks) == 0
+def test_removed_click_keys_are_ignored():
+    with pytest.warns(UserWarning) as rec:
+        cfg = load_config({"render": {"click_mode": "bridge", "click_min_snr": 12.0}})
+    assert {"click_mode", "click_min_snr"} <= {str(w.message).split("'")[1] for w in rec}
+    assert cfg == load_config(None)

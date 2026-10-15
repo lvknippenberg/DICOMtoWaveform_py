@@ -97,13 +97,10 @@ def envelopes(ax, res, means=True, lw=1.0):
         ax.plot(res.t, res.v_mean_neg, color=C_MEAN, lw=0.7, ls="--")
 
 
-def ecg_panel(ax, res, avc=True, clicks=False):
+def ecg_panel(ax, res, avc=True):
     ax.plot(res.t, res.ecg, color=C_ECG, lw=0.8)
     for tr in res.t_rpeaks:
         ax.axvline(tr, color="k", ls=":", lw=0.8)
-    if clicks:
-        for tc in res.t_clicks:
-            ax.axvline(tc, color="0.6", ls="--", lw=0.6)
     if avc:
         for ta in res.t_avc:
             ax.axvline(ta, color="#c2185b", ls="--", lw=1.0)
@@ -112,7 +109,7 @@ def ecg_panel(ax, res, avc=True, clicks=False):
     ax.set_xlabel("time (s)")
 
 
-def example_figure(key, title, avc=True, clicks=False, ylim=None, cfg=None):
+def example_figure(key, title, avc=True, ylim=None, cfg=None):
     res = extract_waveforms(EXAMPLES[key], cfg)
     fig, ax = plt.subplots(2, 1, figsize=(6.6, 3.3), sharex=True, gridspec_kw=dict(height_ratios=[3.2, 1]))
     show_display(ax[0], res)
@@ -123,7 +120,7 @@ def example_figure(key, title, avc=True, clicks=False, ylim=None, cfg=None):
     f = res.flags
     ax[0].set_title(f"{title}  [{f['modality']}, SNR proxy {f['snr_proxy_db']:.0f} dB, "
                     f"{len(res.t_rpeaks)} R-peaks" + (f", {len(res.t_avc)} AVC" if avc else "") + "]")
-    ecg_panel(ax[1], res, avc=avc, clicks=clicks)
+    ecg_panel(ax[1], res, avc=avc)
     ax[1].set_xlim(res.t[0], res.t[-1])
     save(fig, f"ex_{key}.pdf")
     plt.close(fig)
@@ -287,7 +284,7 @@ if __name__ == "__main__":
     print("dp synthetic MAE (cm/s):", dp_steps_figure())
     for key, title, kw in [
         ("pw", "Example 1: PW, mitral inflow", dict(avc=False)),
-        ("cw", "Example 2: CW, aortic outflow", dict(avc=True, clicks=True)),
+        ("cw", "Example 2: CW, aortic outflow", dict(avc=True)),
         ("tdi", "Example 3: tissue Doppler (colour map)", dict(avc=False)),
     ]:
         r = example_figure(key, title, **kw)

@@ -13,7 +13,7 @@ def test_default_yaml_matches_code():
 
 
 def test_write_config_roundtrip(tmp_path):
-    cfg = load_config({"render": {"click_mode": "bridge"}, "dp": {"edge_density": 0.4},
+    cfg = load_config({"render": {"click_max_width_s": 0.03}, "dp": {"edge_density": 0.4},
                        "estimator": {"params": {"hard_threshold": True}}})
     write_config(cfg, tmp_path / "c.yaml")
     assert load_config(tmp_path / "c.yaml") == cfg

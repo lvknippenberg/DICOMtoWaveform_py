@@ -24,6 +24,26 @@ from .render import Spectrogram, build_spectrogram, find_baseline
 
 
 @dataclass
+class SpectrumImage:
+    """The analysed spectral strip as an image, with the rows of the burned-in ECG above it:
+    what plot_result draws. Holds no header area, so no burned-in patient details."""
+
+    rgb: np.ndarray  # (H, W, 3) uint8, columns in time order like WaveformResult.t
+    # velocities (cm/s) of the top and bottom pixel rows; the ECG rows continue the scale
+    v_top: float
+    v_bottom: float
+    # rows at the top that lie above the spectral region (the ECG strip; 0 without ECG); after an
+    # aliasing correction the spectrum below them is the unwrapped, taller one
+    n_ecg_rows: int = 0
+    # the extracted ECG trace as a row in rgb per sample (NaN where not traced)
+    ecg_row: np.ndarray | None = None
+
+    def velocity(self, row):
+        """Row(s) in rgb -> velocity on the image's scale (cm/s)."""
+        return self.v_top + np.asarray(row, float) * (self.v_bottom - self.v_top) / (self.rgb.shape[0] - 1)
+
+
+@dataclass
 class WaveformResult:
     """All signals share the time axis `t` (s), oldest sample first.
 
@@ -42,9 +62,9 @@ class WaveformResult:
     conf_pos: np.ndarray | None = None
     conf_neg: np.ndarray | None = None
     t_rpeaks: np.ndarray = field(default_factory=lambda: np.array([]))
-    t_clicks: np.ndarray = field(default_factory=lambda: np.array([]))  # valve clicks (s)
     t_avc: np.ndarray = field(default_factory=lambda: np.array([]))  # aortic valve closure (s)
     ecg_px: np.ndarray | None = None  # ECG in display pixels, upward positive
+    spectrum: SpectrumImage | None = None  # for plot_result (~1 MB)
     flags: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
     diagnostics: dict[str, Any] = field(default_factory=dict)
@@ -181,8 +201,7 @@ def extract_waveforms(
         hr_hint = None
     t_r = detect_rpeaks(ecg[o], t, cfg.ecg, heart_rate_hint=hr_hint) if (trace.found and cfg.ecg.detect_rpeaks) else np.array([])
 
-    t_clicks, click_strength = click_events(spec, t)
-    t_avc = aortic_valve_closure(spec, t, t_r, cfg.ecg) if spec.click_mode != "off" else np.array([])
+    t_avc = aortic_valve_closure(spec, t, t_r, cfg.ecg) if cfg.ecg.detect_avc else np.array([])
 
     flow = flow_mask(spec, env["k_pos"], env["k_neg"])
     flags = {
@@ -193,7 +212,6 @@ def extract_waveforms(
         "sweep_columns": int(spec.sweep.sum()),
         "aliasing_suspected": bool(ctx.aliasing.get("suspected", False)),
         "aliasing_corrected": bool(ctx.aliasing.get("corrected", False)),
-        "n_clicks": int(len(t_clicks)),
         "snr_proxy_db": snr_proxy_db(spec, flow, cfg.mean.dynamic_range_db),
     }
     flags.update({k: v for k, v in spec.info.items() if k.startswith("warning")})
@@ -227,38 +245,42 @@ def extract_waveforms(
         v_mean=r(env["v_mean"]), v_mean_pos=r(env["v_mean_pos"]), v_mean_neg=r(env["v_mean_neg"]),
         v_max=r(env["v_max"]), v_min=r(env["v_min"]),
         conf_pos=r(est_result.conf_pos), conf_neg=r(est_result.conf_neg),
-        t_rpeaks=t_r, t_clicks=t_clicks, t_avc=t_avc, flags=flags, meta=meta, diagnostics=diag,
+        t_rpeaks=t_r, t_avc=t_avc,
+        spectrum=spectrum_image(rgb, spec, display_spec, trace, cfg.ecg),
+        flags=flags, meta=meta, diagnostics=diag,
     )
 
 
-def click_events(spec: Spectrogram, t: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Valve-click times (s, time order): centre of each run of click columns
-    (the run is padded by one column each side), and its strength (transient
-    height in robust SDs)."""
-    if spec.clicks is None or not spec.clicks.any():
-        return np.array([]), np.array([])
+def spectrum_image(rgb: np.ndarray, spec: Spectrogram, display_spec: Spectrogram, trace: ECGTrace,
+                   cfg) -> SpectrumImage | None:
+    """The analysed strip (spec.rgb, time order) with the frame's rows above the spectral region
+    that hold the burned-in ECG (cfg.strip_margin_px above its top, at most cfg.strip_max_frac of
+    the region's height), and the extracted ECG's position in it."""
+    if spec.rgb is None:
+        return None
+    reg = spec.region
     o = spec.order
-    c = spec.clicks[o]
-    s = np.where(c, spec.click_strength[o], 0.0) if spec.click_strength is not None else c.astype(float)
-    m = np.concatenate([[False], c, [False]]).astype(np.int8)
-    starts = np.flatnonzero(np.diff(m) == 1)
-    ends = np.flatnonzero(np.diff(m) == -1)
-    times, strength = [], []
-    for a, b in zip(starts, ends):
-        seg = s[a:b]
-        # half-maximum centroid of the transient: robust to a run that also
-        # covers part of an adjacent transient
-        w = np.clip(seg - 0.5 * seg.max(), 0.0, None)
-        times.append(float(np.sum(w * t[a:b]) / np.sum(w)) if w.sum() > 0 else float(0.5 * (t[a] + t[b - 1])))
-        strength.append(float(seg.max()))
-    return np.array(times), np.array(strength)
+    rows = trace.row.astype(float) if trace.found else np.full(len(o), np.nan)
+    n = 0
+    if np.isfinite(rows).any():
+        top = int(np.floor(np.nanmin(rows))) - cfg.strip_margin_px
+        n = int(min(max(reg.y0 - top, 0), cfg.strip_max_frac * display_spec.rgb.shape[0], reg.y0))
+    strip = rgb[reg.y0 - n:reg.y0, reg.x0:reg.x0 + len(o)]
+    image = np.concatenate([strip, spec.rgb], axis=0)[:, o]
+    # frame row -> image row; inside the region below the rows the aliasing unwrap added on top
+    added = int(round(spec.zero_row - display_spec.zero_row))
+    ecg_row = np.where(rows < reg.y0, rows - (reg.y0 - n), rows - reg.y0 + n + added)
+    ecg_row[(ecg_row < 0) | spec.sweep] = np.nan
+    return SpectrumImage(rgb=np.ascontiguousarray(image), v_top=float((-n - spec.zero_row) * spec.dy),
+                         v_bottom=float((spec.rgb.shape[0] - 1 - spec.zero_row) * spec.dy), n_ecg_rows=n,
+                         ecg_row=ecg_row[o])
 
 
 def aortic_valve_closure(spec: Spectrogram, t: np.ndarray, t_rpeaks: np.ndarray, cfg) -> np.ndarray:
     """Aortic valve closure per beat (port of the MATLAB GetAorticValveClosure):
     the strongest click transient within cfg.avc_window_s after each R-peak,
-    at least cfg.avc_min_snr robust SDs (lower than the general click threshold:
-    the R-gating makes that safe), not pinned to the window edges. Timed at the
+    at least cfg.avc_min_snr robust SDs (the R-gating keeps speckle transients
+    out), not pinned to the window edges. Timed at the
     half-maximum centroid of the transient."""
     if spec.click_strength is None or len(t_rpeaks) == 0:
         return np.array([])

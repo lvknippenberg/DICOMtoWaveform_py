@@ -4,8 +4,8 @@
     python -m dicom2waveform --write-config my_config.yaml
 
 (the standalone script takes the same arguments). Per file it writes <name>.csv (t, ecg, v_mean,
-v_mean_pos, v_mean_neg, v_max, v_min), <name>_events.json (R-peaks, valve clicks, aortic valve
-closure, flags) and with --plot a QC figure <name>.png.
+v_mean_pos, v_mean_neg, v_max, v_min), <name>_events.json (R-peaks, aortic valve closure,
+flags) and with --plot a QC figure <name>.png.
 """
 
 from __future__ import annotations
@@ -37,7 +37,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not a.dicoms:
         p.error("no DICOM files given")
-    cfg.keep_diagnostics = cfg.keep_diagnostics or a.plot
     out = Path(a.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     n_fail = 0
@@ -50,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
             n_fail += 1
             continue
         res.to_csv(out / f"{name}.csv")
-        events = {"t_rpeaks": res.t_rpeaks.tolist(), "t_clicks": res.t_clicks.tolist(),
+        events = {"t_rpeaks": res.t_rpeaks.tolist(),
                   "t_avc": res.t_avc.tolist(), "flags": res.flags}
         with open(out / f"{name}_events.json", "w", encoding="utf8") as fh:
             json.dump(events, fh, indent=2, default=str)

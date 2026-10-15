@@ -58,9 +58,7 @@ class Spectrogram:
     rgb: np.ndarray | None = None  # cropped display for plotting (H, W, 3)
     overlay: np.ndarray | None = None  # (H, W) bool overlay mask
     info: dict[str, Any] = field(default_factory=dict)
-    clicks: np.ndarray | None = None  # (W,) bool: valve-click columns
-    click_strength: np.ndarray | None = None  # (W,) transient height (robust SDs)
-    click_mode: str = "bridge"
+    click_strength: np.ndarray | None = None  # (W,) valve-click transient height (robust SDs), for AVC
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -170,12 +168,10 @@ def find_text(level: np.ndarray, overlay: np.ndarray, cfg: RenderConfig) -> np.n
     return ndimage.binary_dilation(mask, iterations=1)
 
 
-def find_clicks(level: np.ndarray, sweep: np.ndarray, dt: float, cfg: RenderConfig,
-                return_strength: bool = False):
-    """Columns holding a valve click (short broadband transient).
-
-    With return_strength, also returns the transient height in robust SDs per
-    column (used to rank clicks, e.g. for aortic valve closure)."""
+def click_strength(level: np.ndarray, sweep: np.ndarray, dt: float, cfg: RenderConfig) -> np.ndarray:
+    """Valve-click transient height per column, in robust SDs (0 in the sweep and at the data's
+    edges). A valve click is a short broadband transient (a bright vertical line); the aortic
+    valve closure detector looks for the strongest one in an R-gated window."""
     W = level.shape[1]
     E = level.mean(axis=0)
     E[sweep] = np.nan
@@ -188,8 +184,7 @@ def find_clicks(level: np.ndarray, sweep: np.ndarray, dt: float, cfg: RenderConf
     x = np.arange(W)
     good = ~np.isnan(E)
     if good.sum() < 2 * m:
-        z = np.zeros(W, bool)
-        return (z, np.zeros(W)) if return_strength else z
+        return np.zeros(W)
     Ef = np.interp(x, x[good], E[good])  # bridge the sweep with the edge levels
     hp = Ef - ndimage.grey_opening(Ef, size=m + 2, mode="nearest")
     hp[sweep] = 0.0
@@ -200,32 +195,7 @@ def find_clicks(level: np.ndarray, sweep: np.ndarray, dt: float, cfg: RenderConf
         edge[max(a, b - m + 1):b + 1] = True
     hp[edge] = 0.0
     sig = 1.4826 * np.median(np.abs(hp - np.median(hp))) + 1e-6
-    cand = hp > cfg.click_min_snr * sig
-    clicks = np.zeros(W, bool)
-    for a, b in _runs(cand):
-        if b - a + 1 <= m:
-            clicks[max(0, a - 1):b + 2] = True
-    if return_strength:
-        # strength for every column (not only clicks): R-gated detectors such
-        # as the aortic valve closure may use a lower threshold inside their window
-        return clicks, hp / sig
-    return clicks
-
-
-def bridge_columns(level: np.ndarray, bad: np.ndarray) -> np.ndarray:
-    """Replace columns `bad` by linear interpolation between the nearest good columns."""
-    out = level.copy()
-    good = np.flatnonzero(~bad)
-    if len(good) < 2:
-        return out
-    for a, b in _runs(bad):
-        left = a - 1 if a > 0 else None
-        right = b + 1 if b < level.shape[1] - 1 else None
-        if left is None or right is None or bad[left] or bad[right]:
-            continue
-        w = (np.arange(a, b + 1) - left) / (right - left)
-        out[:, a:b + 1] = level[:, [left]] * (1 - w) + level[:, [right]] * w
-    return out
+    return hp / sig
 
 
 def find_sweep(presence: np.ndarray, min_width: int) -> np.ndarray:
@@ -371,35 +341,16 @@ def build_spectrogram(
     velocity = (np.arange(H) - zero_row) * region.dy
     modality = classify_modality(region, colormap, (velocity.min(), velocity.max()))
 
-    # Valve clicks: narrow, broadband, saturated vertical lines (the leaflets
-    # themselves, not blood flow). Detected as transients of the column-mean
-    # level (as the MATLAB AVC detector does). In 'bridge' mode (default) they
-    # are interpolated over so that no envelope estimator follows them; their
-    # times are reported separately (t_clicks, t_avc). Bridging applies only to
-    # cfg.click_bridge_modalities: on TDI, narrow transients are mostly tissue
-    # motion (isovolumic contraction/relaxation spikes), which the envelope
-    # must keep, so TDI uses 'keep'.
-    if cfg.click_mode not in ("bridge", "follow", "keep", "off"):
-        raise ValueError(f"unknown click_mode '{cfg.click_mode}'")
-    click_mode = cfg.click_mode
-    if click_mode in ("bridge", "follow") and modality not in cfg.click_bridge_modalities:
-        click_mode = "keep"
-    if click_mode == "off":
-        clicks, strength = np.zeros(W, bool), np.zeros(W)
-    else:
-        clicks, strength = find_clicks(level_filled, sweep, region.dx, cfg, return_strength=True)
-    if clicks.any():
-        info["click_columns"] = np.flatnonzero(clicks).tolist()
-        if click_mode == "bridge":
-            level_filled = bridge_columns(level_filled, clicks | sweep)
-            level_filled[:, sweep] = 0.0
+    # Valve clicks (narrow, broadband, saturated vertical lines: the leaflets, not blood flow) stay
+    # in the display; their transient height per column feeds the aortic valve closure detector.
+    strength = click_strength(level_filled, sweep, region.dx, cfg)
     info.update(colour_fraction=frac_colour, n_sweep_columns=int(sweep.sum()), display_zero_row=zero_row)
 
     return Spectrogram(
         level=level_filled, valid=valid, zero_row=zero_row, dy=float(region.dy), dt=float(region.dx),
         sweep=sweep, order=order, colormap=colormap, modality=modality, region=region,
         baseline_rows=baseline_rows, rgb=rgb, overlay=overlay, info=info,
-        clicks=clicks, click_strength=strength, click_mode=click_mode,
+        click_strength=strength,
     )
 
 

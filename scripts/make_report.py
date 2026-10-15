@@ -271,13 +271,13 @@ def main(argv=None):
         t.index = [LABEL.get(m, m) for m in t.index]
         w(md_table(t.sort_values("all")))
 
-    # ------------------------------------------------------------------ clicks / AVC
+    # ------------------------------------------------------------------ AVC
     if (res / "avc_raw.csv").exists():
         av = pd.read_csv(res / "avc_raw.csv")
-        w("\n## 10. Valve clicks and aortic valve closure (real images)\n")
+        w("\n## 10. Aortic valve closure (real images)\n")
         w("Valve clicks are narrow (<= 35 ms), broadband, saturated transients: the leaflets, not blood flow. The "
-          "envelopes keep them by default (`render.click_mode = 'keep'`; 'bridge' interpolates over them); their times are reported as `t_clicks`, and "
-          "aortic valve closure `t_avc` = the strongest transient 0.2-0.5 s after each R-peak (MATLAB method; "
+          "envelopes trace them as displayed; "
+          "aortic valve closure `t_avc` = the strongest click transient 0.2-0.5 s after each R-peak (MATLAB method; "
           "EMW reference 38/38 beats, R->AVC 363 +/- 38 ms).\n")
         per_file = av[av.n_beats_full_window.notna()]
         det = av[av.r_to_avc_ms.notna()]

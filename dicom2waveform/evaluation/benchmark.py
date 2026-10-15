@@ -93,8 +93,6 @@ def ablation_variants() -> list[Variant]:
         Variant("dp_hard_membership", "dp", {"hard_threshold": True}, group="ablation"),
         Variant("dp_no_density", "dp", {"use_density": False}, group="ablation"),
         Variant("dp_fixed_accel", "dp", {"accel_scale_with_range": False}, group="ablation"),
-        Variant("dp_no_click_bridge", "dp", overrides={"render": {"click_mode": "keep"}}, group="ablation"),
-        Variant("dp_follow_clicks", "dp", overrides={"render": {"click_mode": "follow"}}, group="ablation"),
         Variant("dp_no_alias_correction", "dp", overrides={"aliasing": {"correct": False}}, group="ablation"),
         Variant("dp_no_local_norm", "dp", overrides={"dp": {"local_norm_s": 0.0}}, group="ablation"),
         Variant("dp_local_norm_all", "dp", overrides={"dp": {"local_norm_modalities": ["PW", "CW", "TDI"]}}, group="ablation"),

@@ -15,7 +15,6 @@ res.v_mean       # cm/s, intensity-weighted mean velocity inside the flow region
 res.v_mean_pos   # cm/s, same, positive half only
 res.v_mean_neg   # cm/s, same, negative half only
 res.t_rpeaks     # s, R-peak times
-res.t_clicks     # s, valve-click times (narrow broadband transients; not part of the envelopes)
 res.t_avc        # s, aortic valve closure per beat (strongest click 0.2-0.5 s after R)
 res.flags        # modality (PW/CW/TDI), aliasing_suspected/_corrected, ecg_clipped, snr_proxy_db, ...
 res.to_csv("out.csv")
@@ -40,13 +39,14 @@ python scripts/run_examples.py <dicom_dir> <out_dir>    # QC figures + CSVs for 
    never by item order).
 2. **Rendering to intensity.** Overlays (drawn baseline, time markers, ECG trace, text, scale ticks,
    vendor traces) are masked and filled; colour maps (TDI copper map) are converted to a scalar level;
-   valve clicks are detected and reported as events (kept in the envelope by default; `render.click_mode`); the sweep is located and the output rotated
-   to time order.
+   valve clicks stay in the display (the envelope traces them as shown); the sweep is located and the output
+   rotated to time order.
 3. **Aliasing (PW/TDI)**: when the flow wraps around the display, an automatic per-column baseline shift
    unwraps it, so `v_max` / `v_min` can exceed the display limits (`flags["aliasing_corrected"]`).
 4. **ECG** is traced from its rendered colour, per column; R-peaks from QRS-band energy (port of the MATLAB
    `DetectRpeaks.m`, with the DICOM `HeartRate` tag as a prior for search-back); aortic valve closure
-   from the strongest valve click in the 0.2-0.5 s window after each R-peak (port of the MATLAB method).
+   from the strongest valve-click transient in the 0.2-0.5 s window after each R-peak (port of the MATLAB
+   method; general valve-click times are not reported).
 5. **Envelopes (default: DP).** Noise-referenced soft signal membership -> local density ->
    background-corrected and normalised -> per side, the globally optimal outer edge by dynamic
    programming with a physiological acceleration prior. The edge sits at half the image's typical
@@ -66,7 +66,7 @@ The method is explained from first principles, with a plain-language version for
 ## Standalone script (for sharing)
 
 `standalone/dicom2waveform_standalone.py` is a single-file copy of the production path (DP envelope,
-aliasing correction, ECG, R-peaks, clicks / AVC, plots, command line) that needs only numpy, scipy and
+aliasing correction, ECG, R-peaks, AVC, plots, command line) that needs only numpy, scipy and
 pydicom (pyyaml for YAML configs, matplotlib for plots). Give colleagues that file and
 `standalone/dicom2waveform_config.yaml`.
 
@@ -83,9 +83,12 @@ package's results and imports without the package, scikit-image or matplotlib. T
 are left out (`estimator.method` other than `dp` raises an error there).
 
 Notes for users of the earlier hand-written standalone script (before 2026-10-15): the configuration
-class is `PipelineConfig` (was `Config`); `plot_result(res)` needs a result computed with
-`{"keep_diagnostics": True}` (the command line's `--plot` does this), and the spectrogram is in
-`res.diagnostics["spectrogram"]` (was `res.spectrogram`); the internal function names are the package's.
+class is `PipelineConfig` (was `Config`); `plot_result(res)` works on every result (the analysed
+spectral strip, with the burned-in ECG rows above it, is always returned in `res.spectrum`; until 2026-10-15 it needed
+`{"keep_diagnostics": True}`), the full spectrogram is in `res.diagnostics["spectrogram"]` with
+`keep_diagnostics` (was `res.spectrogram`); the internal function names are the package's. General
+valve-click times (`t_clicks`, `flags["n_clicks"]`) and `render.click_mode` were removed on 2026-10-15 (only the
+aortic valve closure `t_avc` remains; old YAML keys are ignored with a warning).
 
 ## Benchmark
 
@@ -99,7 +102,7 @@ segmentation pipeline for ablations. See `docs/BENCHMARK.md` for the design and 
 python scripts/benchmark_synthetic.py <out_dir>                   # synthetic suite, known truth
 python scripts/benchmark_vendor.py "<annotated_dir>" <out_dir>    # real images with scanner traces
 python scripts/benchmark_real.py <out_dir> <dicom_dir> [...]      # real images, unsupervised
-python scripts/benchmark_avc.py <out_dir> <dicom_dir> [...]       # valve clicks / aortic valve closure
+python scripts/benchmark_avc.py <out_dir> <dicom_dir> [...]       # aortic valve closure
 python scripts/make_report.py <out_dir>                           # REPORT.md + figures
 ```
 
@@ -116,7 +119,7 @@ python scripts/overlay_review.py <dicom_dir> <out_dir>
 ```
 
 One PNG per DICOM: the full frame as displayed with `v_max` / `v_min` (solid red / blue), the side means
-`v_mean_pos` / `v_mean_neg` (dashed), the extracted ECG (magenta), R-peaks, valve clicks and aortic valve
+`v_mean_pos` / `v_mean_neg` (dashed), the extracted ECG (magenta), R-peaks and aortic valve
 closure drawn on top with black-outlined lines, and below it a column-aligned copy of the ECG and
 spectrum strip with brightness normalised for visibility (display only; TDI redrawn with a copper map)
 and the same overlay (`dicom2waveform.plot.plot_overlay`; colours in `OVERLAY_STYLE`). These images show

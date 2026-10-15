@@ -47,20 +47,11 @@ class RenderConfig:
     text_level: float = 240.0
     text_max_area: int = 600
     text_ring_max: float = 70.0
-    # [TUNE] Valve clicks (short broadband vertical lines: the leaflets, not blood flow):
-    #   keep   - envelope traces the displayed spectrum including the clicks (default; chosen on
-    #            the cardiac examples, 2026-10-05: the envelope should trace the spectrum as shown)
-    #   bridge - click columns are interpolated over, so the envelope ignores them
-    #   follow - clicks kept, and the envelope may jump to them without smoothness penalty
-    #   off    - no click detection at all (then also no t_clicks and no t_avc)
-    # Click times (t_clicks) and aortic valve closure (t_avc) are reported in every mode but 'off'.
-    click_mode: str = "keep"
-    # 'bridge' / 'follow' apply only to these modalities; others fall back to 'keep'. On TDI,
-    # narrow transients are mostly tissue motion (IVC/IVR spikes), which must be kept.
-    click_bridge_modalities: tuple[str, ...] = ("PW", "CW")
-    # A click is a column-mean transient at least click_min_snr robust SDs high (white top-hat
-    # filtered), at most click_max_width_s wide.
-    click_min_snr: float = 12.0
+    # Valve clicks (short broadband vertical lines: the leaflets, not blood flow) stay in the display,
+    # so the envelope traces the spectrum as shown. Their transient height per column (white top-hat
+    # of the column-mean level with a click_max_width_s window, in robust SDs) feeds the aortic valve
+    # closure detector (ecg.avc_*). General click times are not reported (removed 2026-10-15 with the
+    # bridge / follow modes: unvalidated, and only the AVC is used).
     click_max_width_s: float = 0.035
 
 
@@ -81,13 +72,20 @@ class ECGConfig:
     max_gap_s: float = 0.05
     # Run the R-peak detector.
     detect_rpeaks: bool = True
+    # Detect the aortic valve closure (needs R-peaks).
+    detect_avc: bool = True
+    # Display only (WaveformResult.spectrum, plot_result): the rows of the frame above the spectral
+    # region are included from strip_margin_px above the top of the traced ECG, so the burned-in
+    # ECG can be compared with the extracted one; at most strip_max_frac of the region's height.
+    strip_margin_px: int = 8
+    strip_max_frac: float = 0.25
     # [TUNE] Aortic valve closure (AVC) = strongest valve click in this window (s) after each
     # R-peak (closure fell 341-377 ms after R on the EMW validation set) ...
     avc_window_s: tuple[float, float] = (0.20, 0.50)
     # ... not within this distance (s) of the window edges ...
     avc_edge_guard_s: float = 0.012
-    # ... at least this many robust SDs high (lower than click_min_snr: the R-gating makes that
-    # safe). One true closure at 5.7 was missed with 6.0; lowering it risks false closures ...
+    # ... at least this many robust SDs high (the R-gating keeps speckle transients out). One true
+    # closure at 5.7 was missed with 6.0; lowering it risks false closures ...
     avc_min_snr: float = 6.0
     # ... timed at the half-maximum centroid over this span (s).
     avc_centroid_s: float = 0.035
@@ -270,12 +268,25 @@ class PipelineConfig:
     post: PostConfig = field(default_factory=PostConfig)
     estimator: EstimatorConfig = field(default_factory=EstimatorConfig)
     # Keep intermediate results (spectrogram, estimate, ECG trace, flow mask) in
-    # WaveformResult.diagnostics; plot_result and plot_overlay need them.
+    # WaveformResult.diagnostics; plot_overlay needs them (plot_result does not).
     keep_diagnostics: bool = False
+
+
+# Keys of earlier versions that are ignored (with a warning) so that older YAML files still load.
+REMOVED_KEYS = {
+    "click_mode": "valve clicks always stay in the display (bridge / follow modes removed 2026-10-15)",
+    "click_bridge_modalities": "bridge / follow modes removed 2026-10-15",
+    "click_min_snr": "general valve-click times are no longer reported (2026-10-15); see ecg.avc_min_snr",
+}
 
 
 def _update(obj: Any, values: dict[str, Any]) -> Any:
     for key, val in values.items():
+        if key in REMOVED_KEYS and not hasattr(obj, key):
+            import warnings
+
+            warnings.warn(f"Configuration key '{key}' is ignored: {REMOVED_KEYS[key]}", stacklevel=3)
+            continue
         if not hasattr(obj, key):
             raise KeyError(f"Unknown configuration key '{key}' for {type(obj).__name__}")
         cur = getattr(obj, key)

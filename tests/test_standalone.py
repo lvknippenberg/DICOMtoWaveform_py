@@ -69,13 +69,13 @@ CASES = {
 
 
 @pytest.mark.parametrize("name", list(CASES))
-@pytest.mark.parametrize("config", [None, {"dp": {"edge_density": 0.4}, "render": {"click_mode": "bridge"}}])
+@pytest.mark.parametrize("config", [None, {"dp": {"edge_density": 0.4}, "ecg": {"detect_avc": False}}])
 def test_standalone_matches_package(S, name, config):
     case = generate(SyntheticSpec(**CASES[name]))
     a = extract_waveforms(case.image, config)
     b = S.extract_waveforms(_to_standalone(S, case.image), config)
     for key in ("t", "ecg", "v_max", "v_min", "v_mean", "v_mean_pos", "v_mean_neg", "conf_pos", "conf_neg",
-                "t_rpeaks", "t_clicks", "t_avc"):
+                "t_rpeaks", "t_avc"):
         np.testing.assert_array_equal(getattr(a, key), getattr(b, key), err_msg=key)
     assert a.flags == b.flags
 

@@ -32,13 +32,13 @@ for f in sorted(p for p in src.iterdir() if p.is_file()):
         continue
     res.to_csv(out / f"{name}.csv")
     with open(out / f"{name}_events.json", "w", encoding="utf8") as fh:
-        json.dump({"t_rpeaks": res.t_rpeaks.tolist(), "t_clicks": res.t_clicks.tolist(), "t_avc": res.t_avc.tolist(),
+        json.dump({"t_rpeaks": res.t_rpeaks.tolist(), "t_avc": res.t_avc.tolist(),
                    "flags": res.flags}, fh, indent=2, default=str)
     S.plot_overlay(res, img, out / f"{name}_overlay.png", title=name)
     fl = res.flags
     lo, hi = res.meta["velocity_limits_cm_s"]
     rows.append({"file": name, "modality": fl["modality"], "ecg_found": fl["ecg_found"], "n_rpeaks": len(res.t_rpeaks),
-                 "n_clicks": fl["n_clicks"], "n_avc": len(res.t_avc), "aliasing_suspected": fl["aliasing_suspected"],
+                 "n_avc": len(res.t_avc), "aliasing_suspected": fl["aliasing_suspected"],
                  "aliasing_corrected": fl["aliasing_corrected"], "snr_proxy_db": round(fl["snr_proxy_db"], 1),
                  "v_max_peak_cm_s": round(float(S.np.nanmax(res.v_max)), 1),
                  "v_min_peak_cm_s": round(float(S.np.nanmin(res.v_min)), 1),

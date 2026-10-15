@@ -29,3 +29,16 @@ def test_normalise_brightness_dark_and_bright_agree():
         assert np.array_equal(out[spec.overlay], spec.rgb[spec.overlay])
         medians.append(_signal_median(spec, out))
     assert all(abs(m - 128) < 15 for m in medians), medians
+
+
+def test_plot_result_without_diagnostics(tmp_path):
+    case = generate(SyntheticSpec(waveform="two_peaks", modality="PW", snr_db=20, seed=3))
+    res = extract_waveforms(case.image)
+    sp = res.spectrum
+    assert not res.diagnostics and sp.rgb.dtype == np.uint8 and sp.rgb.shape[1] == len(res.t)
+    if res.flags["ecg_found"]:  # the burned-in ECG rows above the spectrum, and the trace inside them
+        assert sp.n_ecg_rows > 0 and np.nanmin(sp.ecg_row) < sp.n_ecg_rows
+    from dicom2waveform.plot import plot_result
+
+    plot_result(res, tmp_path / "out.png")
+    assert (tmp_path / "out.png").stat().st_size > 10_000

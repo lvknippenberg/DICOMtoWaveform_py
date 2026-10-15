@@ -215,10 +215,6 @@ class DPEstimator(EnvelopeEstimator):
         lam = self.lambda_rows(ctx)
         free = spec.sweep.copy()
         free[1:] |= spec.sweep[:-1]
-        if spec.click_mode == "follow" and spec.clicks is not None and spec.clicks.any():
-            # let the edge jump into and out of valve clicks
-            free |= spec.clicks
-            free[1:] |= spec.clicks[:-1]
         theta = ctx.dp.edge_density
         if spec.modality == "TDI" and ctx.dp.edge_density_tdi is not None:
             theta = ctx.dp.edge_density_tdi

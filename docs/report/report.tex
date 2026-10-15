@@ -45,7 +45,7 @@ Do not distribute outside the institution. Figure~\ref{fig:dp} is synthetic.}}
 \emph{rendered display}, not the Doppler signal. The ECG exists only as burned-in pixels. The timing between
 ECG and Doppler events (for example R-peak $\to$ aortic valve closure) has to be recovered from the picture.
 \item \textbf{Outputs.} On one time axis: the ECG, the outer velocity envelopes $\vmax$ and $\vmin$, mean
-velocities, R-peaks, valve clicks and aortic valve closure (AVC), plus quality flags (modality, aliasing, SNR proxy).
+velocities, R-peaks and aortic valve closure (AVC), plus quality flags (modality, aliasing, SNR proxy).
 \item \textbf{Method.} The header gives the calibration. The display is cleaned (overlays, text, sweep), and the
 envelope is a globally optimal smooth curve, found by dynamic programming (DP) on a noise-referenced
 signal-density image. PW/TDI aliasing is detected and unwrapped automatically.
@@ -102,9 +102,9 @@ Output & Definition \\ \midrule
 \code{v\_max}, \code{v\_min} & outer edge of the positive / negative spectrum (cm/s; 0 when no flow on that side) \\
 \code{v\_mean}, \code{v\_mean\_pos}, \code{v\_mean\_neg} & intensity-weighted mean velocity inside the detected
 flow region: both halves (signed), positive half, negative half \\
-\code{t\_rpeaks}, \code{t\_clicks}, \code{t\_avc} & R-peaks, valve clicks, aortic valve closure (s) \\
+\code{t\_rpeaks}, \code{t\_avc} & R-peaks, aortic valve closure (s) \\
 \code{conf\_pos}, \code{conf\_neg} & per-column confidence of the envelope (0--1) \\
-\code{flags} & modality (PW/CW/TDI), ECG found/clipped, aliasing suspected/corrected, number of clicks, SNR proxy \\
+\code{flags} & modality (PW/CW/TDI), ECG found/clipped, aliasing suspected/corrected, SNR proxy \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -140,7 +140,7 @@ Section~\ref{sec:dp}, and the other components in Section~\ref{sec:components}. 
 \node[box, right=of dcm] (cal) {\textbf{1} Region \&\\calibration (header)};
 \node[box, right=of cal] (clean) {\textbf{2} Display cleaning\\overlays, text, colour map};
 \node[box, right=of clean] (sweep) {\textbf{3} Sweep \&\\time order};
-\node[box, below=of sweep] (click) {\textbf{4} Valve-click\\detection};
+\node[box, below=of sweep] (click) {\textbf{4} Valve-click\\strength};
 \node[box=orange!12, left=of click] (memb) {\textbf{5} Noise stats \&\\soft membership};
 \node[box=orange!12, left=of memb] (dens) {\textbf{6} Local density\\(bg-subtracted, normalised)};
 \node[box=orange!12, left=of dens] (dp) {\textbf{7} DP outer edge\\per side};
@@ -413,16 +413,15 @@ from being counted (they had doubled the heart rate in an earlier version). Peak
 removes small peaks at 20--55\% of RR. Each peak is refined to the largest deflection within $\pm40$~ms. Premature beats are kept on purpose,
 because the valve still opens and closes.
 
-\subsection{Valve clicks and aortic valve closure (stage 4, E3)}
+\subsection{Valve-click strength and aortic valve closure (stage 4, E3)}
 Valve clicks are short, broadband, saturated vertical lines (the leaflets, not blood flow). The script takes the column-mean level and
 applies a white top-hat with a 35~ms flat window. This removes features narrower than a click but keeps steps such as flow onset, so a
-click on the flank of a jet still stands out. Columns more than 12 robust SDs high, in runs no wider than 35~ms, are clicks
-(\code{t\_clicks}). The \code{click\_mode} setting controls what the envelope does with them:
-\code{keep} (default; trace the display as shown), \code{bridge} (interpolate over them on PW/CW), \code{follow} (the DP may jump to them at no cost),
-or \code{off}.
+click on the flank of a jet still stands out. The result, in robust SDs, is the click strength per column. Clicks stay in the
+display, so the envelope traces them as shown. General click times are not reported: a fixed threshold also passed speckle and
+tissue transients, and only the closure is used.
 
-\textbf{AVC} is the strongest click transient 0.20--0.50~s after each R-peak. It needs at least 6 robust SDs (lower than the general
-threshold, which is safe because of the R-gating), must lie at least 12~ms from the window edges, and is timed at the half-maximum centroid.
+\textbf{AVC} is the strongest click transient 0.20--0.50~s after each R-peak. It needs at least 6 robust SDs (the R-gating keeps
+speckle transients out), must lie at least 12~ms from the window edges, and is timed at the half-maximum centroid.
 Images without clicks correctly return no AVC.
 
 \subsection{Aliasing detection and correction (stages 8--9)}
@@ -483,7 +482,7 @@ ECG trace from pixels (E1) & \est & ECG extracted by trace colour \cite{zolgharn
 Here: stroke top/bottom sampled at local extremes, and a clipping flag. \\
 R-peaks (E2) & \adp & Pan--Tompkins QRS-energy detection \cite{pantompkins}. Here: thresholds for 2--8-beat strips (upper-half median), search-back using the DICOM heart-rate tag. \\
 Valve clicks (4) & \adp & Detecting clicks as abrupt intensity changes and interpolating over them \cite{patclickinterp}, or discarding them as discontinuities
-in max/min traces \cite{patclickdiscard}. Here: a top-hat transient of the column-mean level on the rendered display, with selectable keep / bridge / follow modes. \\
+in max/min traces \cite{patclickdiscard}. Here: a top-hat transient of the column-mean level on the rendered display, used only for the AVC; clicks stay in the envelope. \\
 Aortic valve closure (E3) & \adp & Closing notch searched 250--400~ms after the R-wave \cite{patcardiacevents}; automatic AVC timing in TDI \cite{aase}.
 Here: the strongest click transient in an R-gated window on the rendered CW display, centroid-timed (first in the earlier MATLAB tool). \\
 \midrule
@@ -540,7 +539,7 @@ probably a mirror image of the inflow; it is traced as flow (open problem, Secti
 
 \begin{figure}[!htbp]
 \centering\includegraphics[width=0.86\linewidth]{ex_cw.pdf}
-\caption{Example 2, CW aortic outflow (negative). Valve clicks are detected (grey dashed). The R-gated AVC (magenta) is found in each
+\caption{Example 2, CW aortic outflow (negative). The R-gated AVC (magenta) is found in each
 beat at $\sim$0.40~s after the R-peak. On CW the envelope follows the faint outer tail; manual peak marks on CW sit $\sim$10~cm/s further in,
 at the dense edge.}
 \label{fig:cw}
@@ -723,7 +722,7 @@ python dicom2waveform_standalone.py *.dcm --out-dir results --plot [--config cfg
 \end{verbatim}
 The command line writes, per file, a CSV of the signals, a JSON file with the event times and flags, and optionally a QC figure.
 The YAML file documents every parameter and its default. Settings worth tuning are marked \code{[TUNE]}: \code{dp.edge\_density},
-\code{dp.reference\_accel\_cm\_s2}, the density window, \code{render.click\_mode} and the AVC window and threshold. Unspecified keys keep
+\code{dp.reference\_accel\_cm\_s2}, the density window and the AVC window and threshold. Unspecified keys keep
 their defaults. Requirements: \code{numpy}, \code{scipy}, \code{pydicom}; optionally \code{pyyaml} (YAML configs), \code{matplotlib}
 (QC figure) and \code{pylibjpeg} with \code{pylibjpeg-libjpeg} (JPEG-compressed DICOMs). The standalone script gives identical results to the
 \code{dicom2waveform} package on all 49 example images.

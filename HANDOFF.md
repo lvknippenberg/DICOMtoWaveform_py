@@ -21,9 +21,9 @@ data), return:
 | `v_mean` | cm/s, intensity-weighted mean velocity **inside the detected flow region** (signed, both halves) |
 | `v_mean_pos` / `v_mean_neg` | same, positive / negative half only |
 
-Plus `t_rpeaks`, `t_clicks` (valve clicks), `t_avc` (aortic valve closure), per-column confidence,
+Plus `t_rpeaks`, `t_avc` (aortic valve closure), per-column confidence,
 and flags (modality PW/CW/TDI, `aliasing_suspected`, `aliasing_corrected`, `ecg_clipped`,
-`n_clicks`, `snr_proxy_db`, ...). After aliasing correction `v_max`/`v_min` may exceed the display
+`snr_proxy_db`, ...). After aliasing correction `v_max`/`v_min` may exceed the display
 limits (that is the point). Timing between ECG and Doppler events is what downstream
 analysis (a separate repo) uses, as for the MATLAB tool.
 
@@ -57,7 +57,7 @@ Definitions and clinical context per recording type: `docs/FEATURES.md`.
 | a' onset (for iLAD: P wave -> a') | TDI (line on the baseline) | `v_min`: last return to 0 before the a' peak | not built; +-7 ms in 5/5 |
 | E and A peak velocity | PW mitral (E3Q0C6H6, 10529, L3VHDBZ5) | `v_max` | not built; envelope 2.5 cm/s inside the dots on average (narrow tips cut, open point 3) |
 | Jet peak velocity | CW (E3Q0C6HS, L3VHDS0Z) | `v_min` | not built; envelope ~10 cm/s outside the dots (user marks the dense edge) |
-| Aortic valve closure | CW (L3VHCNLD, 232, 11747, 12485, 14018) | clicks, `t_avc` | built; 4/5 within +-3 ms, 14018 missed (open point 4) |
+| Aortic valve closure | CW (L3VHCNLD, 232, 11747, 12485, 14018) | click transient, `t_avc` | built; 4/5 within +-3 ms, 14018 missed (open point 4) |
 | T-wave end (for EMW, with AVC) | ECG, 01_232 | ECG trace | not built |
 | P-wave onset (for iLAD) | ECG | ECG trace | not built |
 
@@ -112,7 +112,7 @@ dicom2waveform/
                    field; YAML override; config_yaml() writes the commented YAML from those comments
   io.py            DICOM read, US region calibration (region by unit codes), metadata
   render.py        crop, overlay masks (baseline, markers, ECG, text, ticks, vendor trace), colour map ->
-                   level, sweep detection + time order, click detection/bridging, level_to_power
+                   level, sweep detection + time order, click transient strength, level_to_power
   ecg.py           ECG trace extraction, R-peak detection (port of DetectRpeaks.m)
   envelope/
     base.py        SideImage (baseline-outward view of one side), EnvelopeEstimator, ColumnwiseEstimator
@@ -184,7 +184,7 @@ New in this port:
 8. **Valve clicks** (broadband transients <= 35 ms in the column mean) are reported as events (see
    Round 2 for the detector). Default `click_mode` changed from 'bridge' to **'keep'** on 2026-10-05 at the
    user's request: the envelope should trace the spectrum as displayed, clicks included. 'bridge'
-   (interpolate over click columns on PW/CW) and 'follow' remain available.
+   (interpolate over click columns on PW/CW) and 'follow' were removed on 2026-10-15 (decision 18).
 9. **TDI copper colour map** -> luminance x 255/160 (brightest copper colour has luminance ~150); noise
    margins are in grey levels.
 10. **ECG**: colour searched in a band of rows (not one row: one EPIQ trace did not cross the B-mode
@@ -234,7 +234,26 @@ New in this port:
     results in `C:\Claude\Doppler\results\stand-alone-smoothness-sweep`). Smoother looks cleaner (a0 160-320 removes
     click spikes and baseline blips) but is not more accurate: a0 80 cuts peaks by 10-12 cm/s, 40 by 20-26 cm/s
     (TDI e'/a' almost vanish); 320 is a tie (synthetic 1.44 vs 1.46 %, <= 3 dB 3.66 vs 3.75 %, vendor 1.98 vs
-    1.92 cm/s, positive peak |error| 8.6 vs 7.3 cm/s). To suppress click spikes, use `render.click_mode: bridge`.
+    1.92 cm/s, positive peak |error| 8.6 vs 7.3 cm/s). (`render.click_mode: bridge` was the targeted way to suppress click spikes; removed, decision 18.)
+18. **General valve clicks removed; AVC only** (2026-10-15, user's decision). The user saw that most reported
+    clicks were false (12 robust SDs passed speckle and tissue transients: 04_12485 16 clicks with ~7 visible, TDI
+    up to 35, PW E3Q0C6H6 36). A broadband + relative-strength filter fixed the count (tried first), but
+    `t_clicks` had no use: only the AVC is a target feature, and the click mask only mattered in the non-default
+    'bridge' / 'follow' modes. Removed: `t_clicks`, `flags["n_clicks"]`, `render.click_mode` (bridge / follow /
+    keep / off), `click_bridge_modalities`, `click_min_snr`, `Spectrogram.clicks`. Old YAML keys are ignored
+    with a warning (`config.REMOVED_KEYS`). Kept: the per-column transient height (`render.click_strength`,
+    `click_max_width_s`) that AVC uses; `ecg.detect_avc` replaces `click_mode: off`. All other outputs
+    bit-identical on the 17 examples. Peak readings (e.g. E/A, jet Vmax, still to build) must not pick a click
+    spike, since the envelope traces clicks as displayed: use `click_strength` for that when it is built. The
+    archival `scripts/external_validation/score_*.py` used `spec.clicks` for this; they target the earlier
+    hand-written standalone API and do not run against the generated script anyway.
+19. **`plot_result` needs no diagnostics** (2026-10-15, user's suggestion). `WaveformResult.spectrum`
+    (`SpectrumImage`: analysed strip, uint8, time order, ~1 MB, plus the frame rows above it that hold the burned-in
+    ECG, `ecg.strip_margin_px` / `strip_max_frac`, and the extracted ECG's row in it) is always returned;
+    `keep_diagnostics` is now only for `plot_overlay` and internals. The ECG straddles the region's top edge in all
+    17 examples (starts 10-48 px above it), so it used to be cut off; now the extracted ECG is drawn over the
+    scanner's trace on the image panel, for checking the tracing. `plot_result` restyled: dark panels, `OVERLAY_STYLE` colours in every panel,
+    R-peak dots + quiet dotted guide, AVC dashed (hidden on TDI), one legend.
 
 ## Tried and rejected
 

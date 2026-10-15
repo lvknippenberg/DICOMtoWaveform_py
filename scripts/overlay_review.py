@@ -1,5 +1,5 @@
 """Full-frame review images: each DICOM with v_max / v_min, the extracted ECG,
-R-peaks, valve clicks and AVC drawn on top (dicom2waveform.plot.plot_overlay).
+R-peaks and AVC drawn on top (dicom2waveform.plot.plot_overlay).
 
 Usage: python scripts/overlay_review.py <dicom_dir> <out_dir> [--config cfg.yaml]
 The images include burned-in patient details: keep them inside the
@@ -31,9 +31,9 @@ def main(argv=None):
         except Exception as e:  # keep going over a batch
             print(f"{f.name:30s} skipped: {type(e).__name__}: {e}")
             continue
-        title = f"{f.name}  [{res.flags['modality']}, {res.meta['method']}, click_mode={cfg.render.click_mode}]"
+        title = f"{f.name}  [{res.flags['modality']}, {res.meta['method']}]"
         plot_overlay(res, img, out / f"{f.name}.png", title=title)
-        print(f"{f.name:30s} {res.flags['modality']:3s} R-peaks {len(res.t_rpeaks)}  clicks {len(res.t_clicks)}  "
+        print(f"{f.name:30s} {res.flags['modality']:3s} R-peaks {len(res.t_rpeaks)}  "
               f"AVC {len(res.t_avc)}")
 
 

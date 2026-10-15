@@ -64,7 +64,6 @@ SWEEP = [
     ("aliasing", "max_cost_ratio", [0.25, 0.75]),
     ("aliasing", "min_edge_density", [0.025, 0.1]),
     ("mean", "dynamic_range_db", [30.0, 50.0]),
-    ("render", "click_min_snr", [8.0, 16.0]),
     ("ecg", "avc_min_snr", [4.0, 8.0]),
     ("ecg", "avc_window_s", [(0.15, 0.55), (0.25, 0.45)]),
     ("ecg", "qrs_band_hz", [(5.0, 30.0), (10.0, 30.0)]),

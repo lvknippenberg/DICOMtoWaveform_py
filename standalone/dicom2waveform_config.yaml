@@ -43,20 +43,11 @@ render:
   text_level: 240.0
   text_max_area: 600
   text_ring_max: 70.0
-  # [TUNE] Valve clicks (short broadband vertical lines: the leaflets, not blood flow):
-  #   keep   - envelope traces the displayed spectrum including the clicks (default; chosen on
-  #            the cardiac examples, 2026-10-05: the envelope should trace the spectrum as shown)
-  #   bridge - click columns are interpolated over, so the envelope ignores them
-  #   follow - clicks kept, and the envelope may jump to them without smoothness penalty
-  #   off    - no click detection at all (then also no t_clicks and no t_avc)
-  # Click times (t_clicks) and aortic valve closure (t_avc) are reported in every mode but 'off'.
-  click_mode: keep
-  # 'bridge' / 'follow' apply only to these modalities; others fall back to 'keep'. On TDI,
-  # narrow transients are mostly tissue motion (IVC/IVR spikes), which must be kept.
-  click_bridge_modalities: [PW, CW]
-  # A click is a column-mean transient at least click_min_snr robust SDs high (white top-hat
-  # filtered), at most click_max_width_s wide.
-  click_min_snr: 12.0
+  # Valve clicks (short broadband vertical lines: the leaflets, not blood flow) stay in the display,
+  # so the envelope traces the spectrum as shown. Their transient height per column (white top-hat
+  # of the column-mean level with a click_max_width_s window, in robust SDs) feeds the aortic valve
+  # closure detector (ecg.avc_*). General click times are not reported (removed 2026-10-15 with the
+  # bridge / follow modes: unvalidated, and only the AVC is used).
   click_max_width_s: 0.035
 
 # ---------------------------------------------------------------------------------------------
@@ -76,13 +67,20 @@ ecg:
   max_gap_s: 0.05
   # Run the R-peak detector.
   detect_rpeaks: true
+  # Detect the aortic valve closure (needs R-peaks).
+  detect_avc: true
+  # Display only (WaveformResult.spectrum, plot_result): the rows of the frame above the spectral
+  # region are included from strip_margin_px above the top of the traced ECG, so the burned-in
+  # ECG can be compared with the extracted one; at most strip_max_frac of the region's height.
+  strip_margin_px: 8
+  strip_max_frac: 0.25
   # [TUNE] Aortic valve closure (AVC) = strongest valve click in this window (s) after each
   # R-peak (closure fell 341-377 ms after R on the EMW validation set) ...
   avc_window_s: [0.2, 0.5]
   # ... not within this distance (s) of the window edges ...
   avc_edge_guard_s: 0.012
-  # ... at least this many robust SDs high (lower than click_min_snr: the R-gating makes that
-  # safe). One true closure at 5.7 was missed with 6.0; lowering it risks false closures ...
+  # ... at least this many robust SDs high (the R-gating keeps speckle transients out). One true
+  # closure at 5.7 was missed with 6.0; lowering it risks false closures ...
   avc_min_snr: 6.0
   # ... timed at the half-maximum centroid over this span (s).
   avc_centroid_s: 0.035
@@ -244,5 +242,5 @@ estimator:
   params: {}
 
 # Keep intermediate results (spectrogram, estimate, ECG trace, flow mask) in
-# WaveformResult.diagnostics; plot_result and plot_overlay need them.
+# WaveformResult.diagnostics; plot_overlay needs them (plot_result does not).
 keep_diagnostics: false

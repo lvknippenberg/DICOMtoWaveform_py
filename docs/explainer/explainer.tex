@@ -378,8 +378,8 @@ copper colour has luminance $\approx$150), so grey and colour displays share one
 are marked invalid (never interpolated, output NaN). All outputs are rotated so time runs oldest $\to$ newest.
 \item \textbf{Modality}: CW from the header's region data type, TDI from a colour map or a display range below
 40~cm/s, PW otherwise.
-\item \textbf{Valve clicks} are detected here (Section~\ref{sec:ecg}). By default (\code{click\_mode: keep}) the
-display is left as it is, so the envelope traces the clicks as shown.
+\item \textbf{Valve clicks} are left in the display, so the envelope traces them as shown; their strength per column
+is measured here for the aortic valve closure (Section~\ref{sec:ecg}).
 \end{itemize}
 
 \begin{plainbox}
@@ -793,7 +793,7 @@ giving brighter parts of the spectrum more weight. Because the scanner's brightn
 average is an approximation, unlike the edge.
 \end{plainbox}
 
-\section{Timing: ECG, R-peaks, valve clicks and aortic valve closure}
+\section{Timing: ECG, R-peaks and aortic valve closure}
 \label{sec:ecg}
 The downstream analyses use the timing between ECG and Doppler events, so these share the envelope's time axis.
 \begin{itemize}
@@ -809,10 +809,11 @@ T-waves from being counted. Peaks need a 250~ms refractory period and at least 0
 half of the candidate peak heights (strips hold only 2--8 beats). In RR gaps longer than 1.66$\times$ the expected RR
 (from the DICOM \code{HeartRate} tag if present) a search-back adds the most plausible missed beat; a T-wave guard
 removes small peaks at 20--55\,\% of RR. Each peak is refined to the largest deflection within $\pm$40~ms.
-\item \textbf{Valve clicks} (\code{find\_clicks}): short broadband transients, i.e.\ bright vertical lines. Take the
-column-mean level and apply a white top-hat (signal minus its morphological opening) with a flat 35~ms structuring
-element: this removes slow variations and steps (flow onset) and keeps only features narrower than 35~ms. Columns
-above 12 robust SDs in runs no wider than 35~ms are clicks.
+\item \textbf{Valve-click strength} (\code{click\_strength}): clicks are short broadband transients, i.e.\ bright
+vertical lines. Take the column-mean level and apply a white top-hat (signal minus its morphological opening) with a
+flat 35~ms structuring element: this removes slow variations and steps (flow onset) and keeps only features narrower
+than 35~ms. The result, in robust SDs, is the click strength per column. Click times themselves are not reported:
+a fixed threshold also passed speckle and tissue transients, and only the closure below is used.
 \item \textbf{Aortic valve closure (AVC)} (\code{aortic\_valve\_closure}): per beat, the strongest click transient
 0.20--0.50~s after the R-peak, at least 6 robust SDs, not at the window edges, timed at the half-maximum centroid.
 \end{itemize}
@@ -820,9 +821,8 @@ above 12 robust SDs in runs no wider than 35~ms are clicks.
 \begin{figure}[!htbp]
 \centering
 \includegraphics[width=\linewidth]{overview.pdf}
-\caption{All outputs of one synthetic CW recording on a shared time axis. With the default \code{click\_mode: keep}
-the envelopes follow the clicks as drawn (the vertical spikes); the click times are reported separately, and the
-R-gated strongest click per beat is the AVC.}
+\caption{All outputs of one synthetic CW recording on a shared time axis. The envelopes follow the
+valve clicks as drawn (the vertical spikes); the R-gated strongest click per beat is the AVC.}
 \label{fig:overview}
 \end{figure}
 
@@ -851,8 +851,7 @@ confirmed on the held-out split after the sensitivity sweep below (it was 0.2).
 examples and putting the threshold between the populations. Examples: the noise margin $M$ and the factors $\beta$
 and $\gamma$ (first MATLAB version, on the 15-image tuning set and the vendor images), the density window, the
 reference acceleration $a_0$ (MATLAB, by inspection), the TDI local normalisation (faint segments in one TDI image
-measured at 0.2--0.35 of the band density), the click threshold (visible clicks scored 12.6--49 robust SDs, speckle
-transients 6--11), the AVC window (closure 341--377~ms after R, mitral closure 14--84~ms), the QRS band (see below)
+measured at 0.2--0.35 of the band density), the AVC window (closure 341--377~ms after R, mitral closure 14--84~ms), the QRS band (see below)
 and $\kappa$ (Section~\ref{sec:alias}).
 \item[A-priori defaults (the rest).] Chosen by reasoning and never tuned: the inner band $h$, the height prior $\rho$,
 the wall band (checked on real slow flow after the sweep), the background percentile (the median), most aliasing settings, the assumed
@@ -1033,8 +1032,8 @@ real images (valve clicks, short blips near the baseline) without losing the pea
 the envelope into flat steps and cuts real peaks: the peak velocity reads 10--12~cm/s low at $a_0 = 80$ and 20--26~cm/s
 low at 40, where the e$'$ and a$'$ waves of tissue Doppler almost disappear. No level is clearly better than the
 default: $a_0 = 320$ is a tie (slightly better on synthetic data at low SNR, slightly worse against the scanner's
-traces and on positive peaks), so 640 stays. To suppress valve-click spikes specifically, \code{render.click\_mode:
-bridge} is the targeted tool; it interpolates over click columns only instead of smoothing everything.
+traces and on positive peaks), so 640 stays. Valve-click spikes therefore stay in the envelope, as displayed; a peak
+reading must step over them.
 
 \begin{table}[!htbp]
 \centering\small
@@ -1072,12 +1071,8 @@ The DICOM does not store the dynamic range; 40~dB is a typical scanner setting. 
 the SNR proxy: 30 or 50~dB changed the synthetic mean-velocity error from 1.01 to 1.00 and 1.06\,\% of the span. The
 envelopes do not use it.
 
-\subsection{Timing: valve clicks, aortic valve closure, R-peaks}
+\subsection{Timing: aortic valve closure, R-peaks}
 \begin{itemize}
-\item \textbf{Click threshold (12 robust SDs).} Measured: visible clicks scored 12.6--49, speckle transients 6--11. At 8,
-251 extra ``clicks'' appear across the 44 images (speckle transients); at 16 there are 130 fewer, including
-visible clicks (they score from 12.6). It does not affect AVC,
-which has its own threshold inside the R-gated window, nor the envelope in the default \code{keep} mode.
 \item \textbf{AVC threshold (6 robust SDs) and window (0.20--0.50~s after R).} Both from MATLAB; the window holds the
 measured closures (341--377~ms) and excludes mitral closure (14--84~ms). The threshold trades missed closures for
 false ones: at 4, 6 more closures are found in total (133 by default); at 8, 10 are lost; one marked closure was
@@ -1105,7 +1100,7 @@ $\theta$, and per measurement type rather than globally.
 split, changes nothing on real images, and is now the default. The 6\,\% wall band was not adopted: its gain comes
 from simulated wall clutter, and on real images it removes genuine slow flow and delays the TDI a$'$ onset.
 \item For timing, the defaults sit between two failure modes that were each observed (T-waves counted versus beats
-missed; speckle versus real clicks).
+missed; missed versus false closures).
 \end{itemize}
 
 \begin{plainbox}
@@ -1208,7 +1203,7 @@ clinician traces (GE scanners): 7--9\,\% of the peak velocity. R-waves were foun
 heart rate matched the scanner's value within 1~bpm where available.
 \item[What about aliasing?] It is detected and corrected automatically on PW and tissue Doppler. Corrected images are
 flagged; check those visually.
-\item[What about artefacts?] Valve clicks are detected and reported; mirror images of strong flow are currently traced
+\item[What about artefacts?] Valve clicks stay in the trace as drawn (the closing click gives the AVC); mirror images of strong flow are currently traced
 as flow, so check recordings with a strong mirror band.
 \item[Can I see what it did?] Yes. Every run can write a figure of the Doppler strip with the traced lines, the ECG,
 R-waves and valve closure, for visual review.
@@ -1223,7 +1218,7 @@ The standalone script is generated from the package, so the names are the same i
 \toprule
 Step & Function & Package module \\ \midrule
 Region, calibration & \code{load\_dicom}, \code{spectral\_region} & \code{io.py} \\
-Cleaning, sweep, clicks & \code{build\_spectrogram}, \code{find\_text}, \code{find\_sweep}, \code{find\_clicks} & \code{render.py} \\
+Cleaning, sweep, clicks & \code{build\_spectrogram}, \code{find\_text}, \code{find\_sweep}, \code{click\_strength} & \code{render.py} \\
 Noise stats, membership & \code{noise\_stats}, \code{membership} & \code{envelope/likelihood.py} \\
 Density & \code{local\_density}, \code{DPEstimator.likelihood} & \code{envelope/likelihood.py},\newline \code{envelope/dp.py} \\
 Edge cost, DP & \code{edge\_cost}, \code{dp\_solve}, \code{\_l1\_min\_convolution}, \code{DPEstimator.estimate} & \code{envelope/dp.py} \\

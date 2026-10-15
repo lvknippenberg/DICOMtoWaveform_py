@@ -71,7 +71,7 @@ chosen with data:
 
 Round 2 (user feedback on four images) added choices made on the **real example images**, not on the
 benchmark:
-- `render.click_min_snr` = 12 (top-hat strength): visible clicks scored 12.6-49, speckle transients 6-11
+- `render.click_min_snr` = 12 (top-hat strength; removed 2026-10-15 with the general click times, see HANDOFF decision 18): visible clicks scored 12.6-49, speckle transients 6-11
   on the four CW/PW images inspected. `ecg.avc_min_snr` = 6 inside the R-gated window, as in MATLAB.
 - `dp.local_norm_*` (per-column half-maximum, TDI only): faint TDI segments in `01_10638` measured as
   real signal (16-80x more non-black pixels than motion-free regions) at 0.2-0.35 of the band density;

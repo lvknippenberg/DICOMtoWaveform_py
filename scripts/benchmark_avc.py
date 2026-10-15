@@ -1,4 +1,4 @@
-"""Valve clicks and aortic valve closure (AVC) on real DICOMs.
+"""Aortic valve closure (AVC) on real DICOMs.
 
 Without a reference, AVC is checked for plausibility and consistency: detection
 rate per beat (beats whose 0.2-0.5 s window lies inside the record), the R->AVC
@@ -32,9 +32,8 @@ def main(argv=None):
                 rows.append({"set": Path(d).name, "case": f.name, "modality": res.flags["modality"],
                              "t_avc": a, "r_to_avc_ms": 1000 * (a - prev[-1]) if len(prev) else np.nan})
             rows.append({"set": Path(d).name, "case": f.name, "modality": res.flags["modality"],
-                         "n_beats_full_window": len(full), "n_avc": len(res.t_avc),
-                         "n_clicks": len(res.t_clicks)})
-            print(f"{f.name}: beats {len(full)}, AVC {len(res.t_avc)}, clicks {len(res.t_clicks)}", flush=True)
+                         "n_beats_full_window": len(full), "n_avc": len(res.t_avc)})
+            print(f"{f.name}: beats {len(full)}, AVC {len(res.t_avc)}", flush=True)
     pd.DataFrame(rows).to_csv(out / "avc_raw.csv", index=False)
 
 

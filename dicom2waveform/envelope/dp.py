@@ -38,32 +38,41 @@ from .base import Context, EnvelopeEstimate, EnvelopeEstimator, SIDES, side_view
 from .likelihood import density_window, local_density, membership
 
 
-def _l1_min_convolution(f: np.ndarray, lam: float) -> tuple[np.ndarray, np.ndarray]:
-    """h(i) = min_k f(k) + lam*|i-k| and the minimising k, in O(n)."""
+def _l1_min_convolution(f: np.ndarray, lam: float, g: np.ndarray | None = None
+                        ) -> tuple[np.ndarray, np.ndarray]:
+    """h(i) = min_k f(k) + lam*|i-k| and the minimising k, in O(n).
+
+    g: optional non-decreasing coordinate per state (g = lam*i by default); the
+    distance is then |g(i) - g(k)|.
+    """
     n = len(f)
     idx = np.arange(n)
-    # forward: min over k <= i of f(k) - lam*k, plus lam*i
-    a = f - lam * idx
+    g = lam * idx if g is None else g
+    # forward: min over k <= i of f(k) - g(k), plus g(i)
+    a = f - g
     cm = np.minimum.accumulate(a)
     arg_f = np.maximum.accumulate(np.where(a <= cm, idx, 0))
-    h_f = cm + lam * idx
-    # backward: min over k >= i of f(k) + lam*k, minus lam*i
-    b = (f + lam * idx)[::-1]
+    h_f = cm + g
+    # backward: min over k >= i of f(k) + g(k), minus g(i)
+    b = (f + g)[::-1]
     cmb = np.minimum.accumulate(b)
     ridx = idx[::-1]
     # position (in reversed array) of the running minimum
     pos = np.maximum.accumulate(np.where(b <= cmb, np.arange(n), 0))
     arg_b = ridx[pos][::-1]
-    h_b = cmb[::-1] - lam * idx
+    h_b = cmb[::-1] - g
     use_b = h_b < h_f
     return np.where(use_b, h_b, h_f), np.where(use_b, arg_b, arg_f)
 
 
-def dp_solve(cost: np.ndarray, lam: float, free: np.ndarray | None = None) -> np.ndarray:
+def dp_solve(cost: np.ndarray, lam: float, free: np.ndarray | None = None,
+             coords: np.ndarray | None = None) -> np.ndarray:
     """Minimise sum_x cost[e_x, x] + lam*|e_x - e_{x-1}| exactly.
 
     free: (W,) bool; the transition INTO column x is unpenalised where free[x]
     (used to decouple the path across the sweep).
+    coords: optional (D, W), non-decreasing along axis 0; the transition into
+    column x then costs |coords[e_x, x] - coords[e_{x-1}, x]| instead (lam unused).
     """
     D, W = cost.shape
     F = np.empty((D, W))
@@ -76,7 +85,7 @@ def dp_solve(cost: np.ndarray, lam: float, free: np.ndarray | None = None) -> np
             F[:, x] = cost[:, x] + F[k, x - 1]
             P[:, x] = k
         else:
-            h, arg = _l1_min_convolution(F[:, x - 1], lam)
+            h, arg = _l1_min_convolution(F[:, x - 1], lam, None if coords is None else coords[:, x])
             F[:, x] = cost[:, x] + h
             P[:, x] = arg
     path = np.empty(W, dtype=np.int64)

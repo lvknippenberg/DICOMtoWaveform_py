@@ -20,6 +20,9 @@ def plot_result(res: WaveformResult, path: str | Path | None = None, title: str 
     Requires a result computed with keep_diagnostics=True.
     extra: optional {label: (v_max, v_min)} (time order) overlaid for comparison.
     """
+    if "spectrogram" not in res.diagnostics:
+        raise ValueError("plot_result needs a result computed with keep_diagnostics=True, e.g. "
+                         "extract_waveforms(path, {'keep_diagnostics': True})")
     import matplotlib
 
     if path is not None:

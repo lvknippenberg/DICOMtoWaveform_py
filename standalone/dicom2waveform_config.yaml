@@ -1,9 +1,11 @@
-# Configuration for dicom2waveform_standalone.py
+# Configuration for dicom2waveform (package and standalone script).
 #
-# Every value below is the built-in default, so this file is optional. To change a setting,
-# keep only the keys you want to change (any nesting level); missing keys keep their default.
-#   python dicom2waveform_standalone.py file.dcm --config dicom2waveform_config.yaml
-#   extract_waveforms("file.dcm", "dicom2waveform_config.yaml")
+# GENERATED from dicom2waveform/config.py by scripts/build_standalone.py: do not edit by hand.
+# Every value below is the built-in default, so this file is optional. To change a setting, copy
+# this file and keep only the keys you want to change (any nesting level); missing keys keep
+# their default.
+#   python dicom2waveform_standalone.py file.dcm --config my_config.yaml
+#   extract_waveforms("file.dcm", "my_config.yaml")
 #   extract_waveforms("file.dcm", {"dp": {"edge_density": 0.4}})     # same, as a dict
 #
 # Physical extents are given in s, cm/s or cm/s^2 where possible and converted to pixels per
@@ -42,7 +44,8 @@ render:
   text_max_area: 600
   text_ring_max: 70.0
   # [TUNE] Valve clicks (short broadband vertical lines: the leaflets, not blood flow):
-  #   keep   - envelope traces the displayed spectrum including the clicks (default)
+  #   keep   - envelope traces the displayed spectrum including the clicks (default; chosen on
+  #            the cardiac examples, 2026-10-05: the envelope should trace the spectrum as shown)
   #   bridge - click columns are interpolated over, so the envelope ignores them
   #   follow - clicks kept, and the envelope may jump to them without smoothness penalty
   #   off    - no click detection at all (then also no t_clicks and no t_avc)
@@ -51,7 +54,7 @@ render:
   # 'bridge' / 'follow' apply only to these modalities; others fall back to 'keep'. On TDI,
   # narrow transients are mostly tissue motion (IVC/IVR spikes), which must be kept.
   click_bridge_modalities: [PW, CW]
-  # A click is a column-mean transient at least click_min_snr robust SDs high (top-hat
+  # A click is a column-mean transient at least click_min_snr robust SDs high (white top-hat
   # filtered), at most click_max_width_s wide.
   click_min_snr: 12.0
   click_max_width_s: 0.035
@@ -74,7 +77,7 @@ ecg:
   # Run the R-peak detector.
   detect_rpeaks: true
   # [TUNE] Aortic valve closure (AVC) = strongest valve click in this window (s) after each
-  # R-peak (closure fell 341-377 ms after R on the validation set) ...
+  # R-peak (closure fell 341-377 ms after R on the EMW validation set) ...
   avc_window_s: [0.2, 0.5]
   # ... not within this distance (s) of the window edges ...
   avc_edge_guard_s: 0.012
@@ -129,9 +132,13 @@ dp:
   # misclassified pixel. Lower = smoother envelope, but may clip steep systolic upstrokes.
   reference_accel_cm_s2: 640.0
   # Scale reference_accel_cm_s2 with the velocity range of the display (relative to
-  # reference_range_cm_s), so high-range CW displays are not over-smoothed.
+  # reference_range_cm_s), so high-range CW displays are not over-smoothed (a fixed value
+  # clipped upstrokes on high-velocity-scale records in the MATLAB tool).
   accel_scale_with_range: true
   reference_range_cm_s: 100.0
+  # Data term: 'edge' (outer-edge model, default) or 'split' (the MATLAB two-region split,
+  # which assumes a flow region filled from the baseline and collapses on hollow spectra).
+  cost: edge
   # [TUNE] The main envelope setting: the edge is placed where the local signal density drops to
   # this fraction of the typical in-flow density. Lower = edge further out on the faint fringe.
   # 0.5 was chosen by leave-one-image-out on vendor-traced vascular images (MAE ~2 cm/s).
@@ -151,12 +158,13 @@ dp:
   background_percentile: 50.0
   # Normalise the density by this percentile (the typical in-flow density), at least
   # normalise_floor (null/0 = off). Lets one edge_density serve dense (CW, vascular) and
-  # sparse (speckled TDI) renderings.
+  # sparse (speckled TDI) renderings. Chosen on the synthetic dev split + vendor traces.
   normalise_percentile: 99.0
   normalise_floor: 0.2
   # Local normalisation ("half maximum per column"): additionally divide each side's density by
   # its maximum within +-local_norm_s (s), but never by less than local_norm_floor. Keeps faint
-  # low-velocity TDI segments. Applied only to local_norm_modalities; 0 disables.
+  # low-velocity TDI segments (real signal at only 0.2-0.35 of the band density). On CW it
+  # stretches clutter columns, hence only local_norm_modalities; 0 disables.
   local_norm_s: 0.01
   local_norm_floor: 0.15
   local_norm_modalities: [TDI]
@@ -179,8 +187,11 @@ aliasing:
   cut_smooth_rows: 5
   # ... moving the cut away from the display edge costs edge_preference per row ...
   edge_preference: 0.002
-  # ... the cut path costs cut_lambda per row moved between columns ...
+  # ... the cut path costs cut_lambda per row moved between columns, plus cut_cross_weight per
+  # row of signal density it passes over (density present in both columns: the cut may not jump
+  # through a flow band, e.g. through the hollow PW spectral window near the baseline) ...
   cut_lambda: 0.05
+  cut_cross_weight: 0.25
   # ... and it is applied only if the cut crosses less than max_cost_ratio of the signal density
   # at the display edge, and that edge density exceeds min_edge_density.
   max_cost_ratio: 0.5
@@ -205,8 +216,28 @@ mean:
 # post: optional smoothing of v_max / v_min (in time order, never across the sweep)
 # ---------------------------------------------------------------------------------------------
 post:
-  # 'none', 'median' or 'savgol' (Savitzky-Golay). The DP already enforces smoothness.
+  # 'none', 'median', 'savgol' (Savitzky-Golay), 'kalman_cv' or 'kalman_ca' (constant velocity /
+  # acceleration Kalman filter with RTS smoother). The DP already enforces smoothness.
   method: none
   median_window_s: 0.015
   savgol_window_s: 0.025
   savgol_order: 2
+  # Kalman process noise, expressed as an acceleration (cv) or jerk (ca) SD.
+  kalman_q: 2000.0
+  # Kalman measurement noise SD in cm/s (0 -> 2 pixels of the display).
+  kalman_r_cm_s: 0.0
+
+# ---------------------------------------------------------------------------------------------
+# estimator: which envelope estimator is used (benchmark option)
+# ---------------------------------------------------------------------------------------------
+estimator:
+  # 'dp' (the method described in docs/explainer). The package also offers the benchmark
+  # estimators (threshold, otsu, percentile, gm, mgm, snsi, asnsi, qia, latham, segmentation);
+  # the standalone script has 'dp' only.
+  method: dp
+  # Keyword arguments for the estimator (free-form).
+  params: {}
+
+# Keep intermediate results (spectrogram, estimate, ECG trace, flow mask) in
+# WaveformResult.diagnostics; plot_result and plot_overlay need them.
+keep_diagnostics: false

@@ -14,8 +14,7 @@ from . import __version__
 from .config import PipelineConfig, config_to_dict, load_config
 from .ecg import ECGTrace, detect_rpeaks, ecg_amplitude, extract_ecg
 from .aliasing import unwrap
-from .envelope import EnvelopeEstimate, EnvelopeEstimator, make_estimator
-from .envelope.base import Context
+from .envelope.base import Context, EnvelopeEstimate, EnvelopeEstimator
 from .envelope.dp import DPEstimator
 from .envelope.mean import mean_envelopes
 from .envelope.postprocess import smooth_series
@@ -62,6 +61,18 @@ class WaveformResult:
         np.savetxt(path, data, delimiter=",", header=",".join(cols), comments="", fmt="%.6g")
 
 
+def make_estimator(name: str, **params: Any) -> EnvelopeEstimator:
+    """Envelope estimator by registry name. 'dp' needs nothing else; the benchmark estimators are
+    imported on demand (they need scikit-image and are not part of the standalone script)."""
+    if name == "dp":
+        return DPEstimator(**params)
+    try:
+        from .envelope import make_estimator as from_registry
+    except ImportError:  # single-file standalone script: no package to import from
+        raise ValueError(f"Estimator '{name}' is not available here; the standalone script has 'dp' only") from None
+    return from_registry(name, **params)
+
+
 def envelopes_from_spectrogram(
     spec: Spectrogram,
     cfg: PipelineConfig,
@@ -83,7 +94,7 @@ def envelopes_from_spectrogram(
     if spec.modality != "CW":
         # wrap-around test on the DP edges (the framework's detector, whatever the estimator)
         dp = e if e.method == "dp" else DPEstimator().estimate(ctx)
-        alias_info["suspected"] = aliasing_suspected(spec, dp.k_pos, dp.k_neg, cfg.quality)
+        alias_info["suspected"] = aliasing_suspected(spec, dp.k_pos, dp.k_neg, cfg.aliasing)
         if alias_info["suspected"] and cfg.aliasing.correct:
             density = dp.diagnostics.get("likelihood")
             if density is None:

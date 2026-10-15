@@ -29,7 +29,7 @@ analysis (a separate repo) uses, as for the MATLAB tool.
 
 Everything in `Plan.txt` (the user's plan, `docs/plan/Plan.txt`) plus the review
 (`docs/plan/Plan_review.md`) is implemented, except the annotation GUI (the user chose synthetic data
-+ visual QC instead). The user chose the **full benchmark** scope. 47 pytest tests pass.
++ visual QC instead). The user chose the **full benchmark** scope. 55 pytest tests pass.
 
 - Package `dicom2waveform` (editable install in the env), entry point `extract_waveforms(path)`.
   ~0.2 s per 1024x768 image, ~0.6 s for 1920x1080.
@@ -80,7 +80,8 @@ question to the user: iLAD = P onset -> a' onset (as drawn) or -> a' peak (class
   mixed channels and failed with a DLL entry-point error, so that was reverted). Run
   `envs\tectonic\Library\bin\tectonic.exe report.tex` with that env's `Library\bin` on PATH.
 - Methods report for co-workers (2026-10-13): `docs/report/report.tex` (+ `make_figures.py`, which runs the
-  standalone script). Figures and PDF include crops of clinical images and are gitignored (`*.pdf`).
+  package). Tutorial-style explainer with a clinician part (2026-10-15): `docs/explainer/explainer.tex` (+
+  `make_figures.py`, all figures synthetic, so that PDF is shareable). Figures and PDF include crops of clinical images and are gitignored (`*.pdf`).
 - External-validation envs (2026-10-13): `envs\echonet` (Python 3.10, PyTorch 2.3.1 CPU; 2.4 fails on the missing
   `libomp140.x86_64.dll`) for EchoNet-Measurements, `envs\echoxflow` (Python 3.13) for the EchoXFlow loader.
   External code/data in `C:\Claude\Doppler\external` (EchoNet repo + Doppler weights 1.3 GB; EchoXFlow subset ~20 GB).
@@ -105,7 +106,8 @@ except `docs/results/*.png`, which are synthetic/aggregate only).
 
 ```
 dicom2waveform/
-  config.py        all parameters (dataclasses, physical units), YAML override; configs/default.yaml
+  config.py        all parameters (dataclasses, physical units), documented in the comment above each
+                   field; YAML override; config_yaml() writes the commented YAML from those comments
   io.py            DICOM read, US region calibration (region by unit codes), metadata
   render.py        crop, overlay masks (baseline, markers, ECG, text, ticks, vendor trace), colour map ->
                    level, sweep detection + time order, click detection/bridging, level_to_power
@@ -122,25 +124,27 @@ dicom2waveform/
   aliasing.py      aliasing correction: least-signal cut path through the circular display (DP),
                    rows beyond the cut moved by one Nyquist span -> taller, unwrapped Spectrogram
   pipeline.py      extract_waveforms(), WaveformResult, envelopes_from_spectrogram()
+  cli.py           command line (python -m dicom2waveform ...; --write-config); __main__.py
   plot.py          QC figure (spectral region + ECG strip only); plot_overlay (full-frame review image
                    + normalised spectrum panel), normalise_brightness (display only)
   synthetic.py     synthetic DICOM displays with known truth; benchmark_suite()
   evaluation/      metrics.py (pointwise, per-beat, bootstrap, Bland-Altman), benchmark.py (variants,
                    runners for synthetic / vendor-trace / real)
 scripts/           run_examples, benchmark_synthetic, benchmark_vendor, benchmark_real, benchmark_avc,
-                   make_report, failure_gallery, overlay_review, write_default_config
+                   make_report, failure_gallery, overlay_review,
+                   build_standalone (writes standalone/ from the package; --check)
 scripts/external_validation/  EchoNet-Measurements and EchoXFlow validation (docs/VALIDATION.md); absolute paths
                    to the working folder and external data
-standalone/        single-file copy of the production path (DP only, no benchmark code) for sharing
-                   with co-workers + documented dicom2waveform_config.yaml (2026-10-13). Output was
-                   identical to the package on all 49 example DICOMs (defaults and overrides). Not
-                   generated: changes to the package's DP / ECG / render code must be copied by hand.
-                   Differences: the 2 aliasing-detection keys sit under `aliasing:` (not `quality:`),
-                   no Kalman smoothing, no estimator choice.
-tests/             47 tests (DP vs brute force, rendering, pipeline accuracy per modality, R-peaks,
-                   every estimator runs, aliasing unwrap both directions, click/AVC timing, click
-                   modes, real examples incl. HR vs DICOM HeartRate tag, default.yaml in sync with
-                   config.py, brightness normalisation)
+standalone/        GENERATED (scripts/build_standalone.py, 2026-10-15): single-file script = the package's
+                   production modules concatenated (config, io, render, ecg, envelope/likelihood, base, dp,
+                   mean, postprocess, quality, aliasing, pipeline, plot, cli; no benchmark estimators) +
+                   dicom2waveform_config.yaml (commented, from config.py). Never edit by hand; rebuild
+                   after package changes. Identical output to the package on all 49 example DICOMs
+                   (defaults and overrides) and in tests/test_standalone.py.
+tests/             68 tests (DP vs brute force, rendering, pipeline accuracy per modality, R-peaks,
+                   every estimator runs, aliasing unwrap both directions and per beat, click/AVC timing, click
+                   modes, real examples incl. HR vs DICOM HeartRate tag, generated YAML in sync with
+                   config.py, standalone up to date and identical to the package, brightness normalisation)
 ```
 
 ## Key decisions and learnings (with the reasons)
@@ -190,6 +194,28 @@ New in this port:
     the side depth). The published methods assume a known flow direction; without the gate they report
     noise on every no-flow side (ungated variants are kept in the 2-D experiment).
 13. **Synthetic suite seeding uses zlib.crc32**, not `hash()` (randomised per process).
+14. **Aliasing cut may not jump through signal** (`aliasing.cut_cross_weight` = 0.25, 2026-10-15). With a
+    pure L1 transition the cut could jump through a flow band between two columns (~3 cost for 60 rows)
+    and take the shorter route through the hollow PW spectral window near the baseline, pinned at the
+    guard: the band was unwrapped the wrong way (systolic alias case: 3/8 seeds at 20 dB, 30/30 at 10 dB
+    had one beat with v_min ~75 cm/s off and a ~120 cm/s v_max spike). Now a transition also costs
+    `cut_cross_weight` per unit of density present in both columns between the two cut rows (an L1
+    distance in a warped coordinate, still O(rows) per column via `dp_solve(..., coords)`); following a
+    growing band is free. 0.1 and 0.25 clean at 10-30 dB; 0.05 and 0.5-2 leave 1/30 failing at 10 dB. Real images: only 01_10529
+    changes (1 column, 2.8 cm/s). `cut_cross_weight: 0` restores the old behaviour exactly. Test:
+    `test_aliasing_unwrap_every_beat`.
+
+15. **Standalone generated from the package; one documented config** (user's choice, 2026-10-15). The
+    hand-copied standalone script had drifted (aliasing keys under `quality:` vs `aliasing:`, a stale
+    `render.click_background_s`, no Kalman). Now `config.py` is the only place where defaults and their
+    documentation live (comments above each field; `config_yaml()` turns them into the commented YAML), and
+    `scripts/build_standalone.py` concatenates the production modules into the single file. Defaults stay in
+    code, the YAML stays optional (rejected: a mandatory config file, since results would then depend on which
+    copy of the YAML a colleague has). Config changes: `quality:` section removed, `alias_edge_fraction` /
+    `alias_min_fraction` moved to `aliasing:`; `click_background_s` removed; the estimator registry is loaded
+    lazily so the production path needs no scikit-image; scikit-image and matplotlib are optional extras.
+    A relative import inside a function must sit in `try: ... except ImportError` (the build script checks
+    this), because the standalone script has no package to import from.
 
 ## Tried and rejected
 
@@ -295,5 +321,5 @@ $PY scripts/benchmark_real.py C:/Claude/Doppler/results "<dir1>" "<dir2>" ...
 $PY scripts/make_report.py C:/Claude/Doppler/results   # regenerates REPORT.md (conclusions section is hand-written; re-add)
 $PY scripts/failure_gallery.py C:/Claude/Doppler/results --n 20
 $PY scripts/overlay_review.py "<dicom_dir>" C:/Claude/Doppler/review/overlay   # full-frame review images + brightness-normalised spectrum panel (PHI: institution only)
-$PY scripts/write_default_config.py   # regenerate configs/default.yaml after changing config.py defaults (tests/test_config.py checks it)
+$PY scripts/build_standalone.py   # regenerate standalone/ (script + commented YAML) after ANY package change (tests check it)
 ```

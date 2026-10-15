@@ -10,7 +10,10 @@ column:
 2. A *cut path* is found through the circular display, away from the
    zero-velocity zone, that crosses the least signal, with a smoothness prior
    (dynamic programming over the cut position). Without evidence the cut
-   stays at the display edge (no change).
+   stays at the display edge (no change). Between columns the cut may not
+   jump through signal present in both: a flow band stays on one side of the
+   cut, so the cut follows a wrapped band as it grows instead of tearing
+   through it to the other side.
 3. Rows beyond the cut are moved by one period (+-H rows): rows beyond a cut
    in the top part become velocities past the bottom limit and vice versa.
    The result is a taller, unwrapped Spectrogram on which every estimator,
@@ -74,7 +77,12 @@ def find_cut(density: np.ndarray, zero_row: float, sweep: np.ndarray, cfg: Alias
     cost[:, sweep] = 0.0
     free = sweep.copy()
     free[1:] |= sweep[:-1]
-    path = dp_solve(cost, cfg.cut_lambda, free)
+    # transition x-1 -> x: cut_lambda per row + cut_cross_weight per unit of density
+    # passed over (present in both columns, so following a growing band is free)
+    da = np.clip(d[rows], 0.0, None)
+    both = np.minimum(da, np.roll(da, 1, axis=1))
+    coords = cfg.cut_lambda * u[:, None] + cfg.cut_cross_weight * np.cumsum(both, axis=0)
+    path = dp_solve(cost, cfg.cut_lambda, free, coords)
     cut = rows[path]
     data = ~sweep
     path_cost = float(d[cut, np.arange(W)][data].mean()) if data.any() else 0.0

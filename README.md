@@ -25,10 +25,12 @@ NaN marks samples without data (the sweep, i.e. the write position of the scanne
 buffer). Velocity signs follow the DICOM header (`PhysicalDeltaY`): on an operator-inverted display this is
 opposite to the on-screen label.
 
-Command line (QC figures + CSVs for a folder):
+Command line (CSV + events JSON per file, `--plot` adds a QC figure):
 
 ```bash
-python scripts/run_examples.py <dicom_dir> <out_dir>
+python -m dicom2waveform file.dcm [more.dcm ...] [--config my.yaml] [--out-dir DIR] [--plot]
+python -m dicom2waveform --write-config my.yaml        # documented configuration to edit
+python scripts/run_examples.py <dicom_dir> <out_dir>    # QC figures + CSVs for a folder
 ```
 
 ## How it works
@@ -53,8 +55,37 @@ python scripts/run_examples.py <dicom_dir> <out_dir>
 6. **Mean envelopes** are intensity-weighted (de-compressed display power by default) over the pixels
    between the baseline and the outer edge.
 
-All parameters are in `dicom2waveform/config.py` (dataclasses, physical units), overridable from YAML
-(`load_config("my.yaml")`) or a dict.
+All parameters are in `dicom2waveform/config.py` (dataclasses, physical units, each documented in the
+comment above it), overridable from YAML (`load_config("my.yaml")`) or a dict; only the keys you give
+change. The documented reference file `standalone/dicom2waveform_config.yaml` is generated from
+`config.py`, comments included, so the defaults and their documentation live in one place.
+
+The method is explained from first principles, with a plain-language version for clinicians, in
+`docs/explainer/explainer.pdf` (all figures synthetic, shareable).
+
+## Standalone script (for sharing)
+
+`standalone/dicom2waveform_standalone.py` is a single-file copy of the production path (DP envelope,
+aliasing correction, ECG, R-peaks, clicks / AVC, plots, command line) that needs only numpy, scipy and
+pydicom (pyyaml for YAML configs, matplotlib for plots). Give colleagues that file and
+`standalone/dicom2waveform_config.yaml`.
+
+Both files are **generated** from the package by `scripts/build_standalone.py`: never edit them by hand.
+After any change to the package run
+
+```bash
+python scripts/build_standalone.py          # rewrites standalone/
+python scripts/build_standalone.py --check  # exit 1 if standalone/ is out of date
+```
+
+`tests/test_standalone.py` fails when they are out of date, and checks that the script gives exactly the
+package's results and imports without the package, scikit-image or matplotlib. The benchmark estimators
+are left out (`estimator.method` other than `dp` raises an error there).
+
+Notes for users of the earlier hand-written standalone script (before 2026-10-15): the configuration
+class is `PipelineConfig` (was `Config`); `plot_result(res)` needs a result computed with
+`{"keep_diagnostics": True}` (the command line's `--plot` does this), and the spectrogram is in
+`res.diagnostics["spectrogram"]` (was `res.spectrogram`); the internal function names are the package's.
 
 ## Benchmark
 
@@ -93,7 +124,7 @@ inside the institution.
 ## Development
 
 ```bash
-pip install -e .[dev]
+pip install -e .[dev]     # core needs numpy, scipy, pydicom, pyyaml; extras: plot, bench, dev
 pytest
 ```
 
@@ -104,5 +135,5 @@ known envelopes, ECG and artefacts. Tests on real example DICOMs run when the fo
 **Patient data:** the example images contain burned-in identifiers. Never commit DICOMs, full-frame
 renderings or QC figures (`.gitignore` excludes images and results).
 
-`configs/default.yaml` is generated from `config.py` (`python scripts/write_default_config.py`);
-a test fails when it is out of date.
+`standalone/` is generated from the package (`python scripts/build_standalone.py`); a test fails
+when it is out of date.

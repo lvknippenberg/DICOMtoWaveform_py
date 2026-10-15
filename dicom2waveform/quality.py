@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .config import QualityConfig
+from .config import AliasingConfig
 from .envelope.base import side_view
 from .render import Spectrogram, level_to_power
 
@@ -37,7 +37,7 @@ def snr_proxy_db(spec: Spectrogram, flow: np.ndarray, dynamic_range_db: float = 
     return float(10 * np.log10(max(sig.mean(), 1e-12) / max(bg.mean(), 1e-12)))
 
 
-def aliasing_suspected(spec: Spectrogram, k_pos: np.ndarray, k_neg: np.ndarray, cfg: QualityConfig) -> bool:
+def aliasing_suspected(spec: Spectrogram, k_pos: np.ndarray, k_neg: np.ndarray, cfg: AliasingConfig) -> bool:
     """PW aliasing wraps flow around the display: where it happens, flow leaves
     one velocity limit and re-enters at the opposite one, so in the same
     columns both outer edges reach their display limits. (One edge alone at

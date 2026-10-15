@@ -14,6 +14,9 @@ Benchmark hierarchy of Plan.txt section 23:
     J dp           likelihood image + dynamic-programming curve   (image, primary)
 
 plus `segmentation`, the fully configurable image pipeline used for ablations.
+
+The registry (ESTIMATORS, make_estimator) is loaded on first use, so the production path
+(DP only) does not import the benchmark estimators or their scikit-image dependency.
 """
 
 from __future__ import annotations
@@ -22,25 +25,33 @@ from typing import Any
 
 from .base import Context, EnvelopeEstimate, EnvelopeEstimator, SideImage, side_view
 from .dp import DPEstimator
-from .segmentation import LathamEstimator, OtsuEstimator, SegmentationEstimator, ThresholdEstimator
-from .spectral import (AdaptiveSNSIEstimator, GMEstimator, MGMEstimator, PercentileEstimator,
-                       QIAEstimator, SNSIEstimator)
-
-ESTIMATORS: dict[str, type[EnvelopeEstimator]] = {
-    cls.name: cls
-    for cls in (ThresholdEstimator, OtsuEstimator, PercentileEstimator, GMEstimator, MGMEstimator,
-                SNSIEstimator, AdaptiveSNSIEstimator, QIAEstimator, LathamEstimator, DPEstimator,
-                SegmentationEstimator)
-}
 
 BENCHMARK_ORDER = ["threshold", "otsu", "percentile", "gm", "mgm", "snsi", "asnsi", "qia", "latham", "dp"]
 
 
+def _registry() -> dict[str, type[EnvelopeEstimator]]:
+    from .segmentation import LathamEstimator, OtsuEstimator, SegmentationEstimator, ThresholdEstimator
+    from .spectral import (AdaptiveSNSIEstimator, GMEstimator, MGMEstimator, PercentileEstimator,
+                           QIAEstimator, SNSIEstimator)
+
+    return {cls.name: cls
+            for cls in (ThresholdEstimator, OtsuEstimator, PercentileEstimator, GMEstimator, MGMEstimator,
+                        SNSIEstimator, AdaptiveSNSIEstimator, QIAEstimator, LathamEstimator, DPEstimator,
+                        SegmentationEstimator)}
+
+
+def __getattr__(name: str) -> Any:
+    if name == "ESTIMATORS":
+        return _registry()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 def make_estimator(name: str, **params: Any) -> EnvelopeEstimator:
+    registry = _registry()
     try:
-        cls = ESTIMATORS[name]
+        cls = registry[name]
     except KeyError:
-        raise KeyError(f"Unknown estimator '{name}'. Available: {sorted(ESTIMATORS)}") from None
+        raise KeyError(f"Unknown estimator '{name}'. Available: {sorted(registry)}") from None
     return cls(**params)
 
 

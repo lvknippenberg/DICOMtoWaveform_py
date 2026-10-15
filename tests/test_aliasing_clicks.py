@@ -28,6 +28,19 @@ def test_aliasing_is_unwrapped(wf, vp, top, bot):
     assert err_c < 0.5 * err_u
 
 
+@pytest.mark.parametrize("seed", range(4, 12))
+def test_aliasing_unwrap_every_beat(seed):
+    # Negative jet past the bottom of a hollow PW spectrum. The cut must follow the wrapped band
+    # into the top part; it used to jump through the band into the empty spectral window near the
+    # baseline in one beat (seeds 4, 10, 11), leaving v_min ~75 cm/s off and a ~120 cm/s v_max spike.
+    case = generate(SyntheticSpec(waveform="systolic", modality="PW", snr_db=20, seed=seed, peak_velocity=75.0,
+                                  v_top=100.0, v_bottom=-40.0, alias=True))
+    res = extract_waveforms(case.image)
+    assert res.flags["aliasing_corrected"]
+    assert np.nanmax(np.abs(res.v_min - case.truth["v_min"])) < 15
+    assert np.nanmax(res.v_max) < 10  # no positive flow in the truth
+
+
 def test_no_unwrap_without_aliasing(cases):
     res = extract_waveforms(cases["PW"].image)
     assert not res.flags["aliasing_corrected"]

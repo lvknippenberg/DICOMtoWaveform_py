@@ -1,4 +1,5 @@
-"""Figures for docs/report/report.tex, computed with standalone/dicom2waveform_standalone.py.
+"""Figures for docs/report/report.tex, computed with the dicom2waveform package (the standalone
+script, standalone/dicom2waveform_standalone.py, is generated from it and gives identical results).
 
     python docs/report/make_figures.py
 
@@ -21,8 +22,29 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-sys.path.insert(0, str(ROOT / "standalone"))
-import dicom2waveform_standalone as S  # noqa: E402
+from dicom2waveform import extract_waveforms as _extract_waveforms  # noqa: E402
+from dicom2waveform.config import load_config  # noqa: E402
+from dicom2waveform.envelope.base import Context, side_view  # noqa: E402
+from dicom2waveform.envelope.dp import DPEstimator, edge_cost  # noqa: E402
+from dicom2waveform.envelope.likelihood import membership, noise_stats  # noqa: E402
+from dicom2waveform.io import load_dicom  # noqa: E402
+
+
+def extract_waveforms(source, cfg=None):
+    """extract_waveforms with diagnostics kept (the figures need the spectrogram)."""
+    cfg = load_config(cfg)
+    cfg.keep_diagnostics = True
+    return _extract_waveforms(source, cfg)
+
+
+def spectrogram(res):
+    """The spectrogram the envelope was computed on (unwrapped if aliasing was corrected)."""
+    return res.diagnostics["spectrogram"]
+
+
+def signal_density(spec, ns, lc, dc):
+    """Normalised local signal density d, as used by the DP edge cost."""
+    return DPEstimator().likelihood(Context(spec, lc, dc, _noise=ns))
 
 warnings.filterwarnings("ignore")
 OUT = HERE / "figures"
@@ -55,7 +77,7 @@ C_MAX, C_MIN, C_MEAN, C_ECG = "#ff3b30", "#00c8ff", "#ffd60a", "#2e7d32"
 
 def show_display(ax, res, spec=None, t_offset=0.0):
     """Spectral display (time order) with velocity axis, as plot_result does."""
-    spec = spec or res.spectrogram
+    spec = spec or spectrogram(res)
     rgb = spec.rgb[:, spec.order]
     t = res.t
     v_top = (0 - spec.zero_row) * spec.dy
@@ -91,7 +113,7 @@ def ecg_panel(ax, res, avc=True, clicks=False):
 
 
 def example_figure(key, title, avc=True, clicks=False, ylim=None, cfg=None):
-    res = S.extract_waveforms(EXAMPLES[key], cfg)
+    res = extract_waveforms(EXAMPLES[key], cfg)
     fig, ax = plt.subplots(2, 1, figsize=(6.6, 3.3), sharex=True, gridspec_kw=dict(height_ratios=[3.2, 1]))
     show_display(ax[0], res)
     envelopes(ax[0], res)
@@ -109,9 +131,9 @@ def example_figure(key, title, avc=True, clicks=False, ylim=None, cfg=None):
 
 
 def vendor_figure():
-    img = S.load_dicom(EXAMPLES["vascular"])
-    res = S.extract_waveforms(img)
-    spec = res.spectrogram
+    img = load_dicom(EXAMPLES["vascular"])
+    res = extract_waveforms(img)
+    spec = spectrogram(res)
     region = spec.region
     sub = img.pixels[region.y0:region.y1 + 1, region.x0:region.x1 + 1]
     m = np.all(np.abs(sub.astype(int) - np.asarray(VENDOR_RGB)) <= 12, axis=2)
@@ -143,15 +165,15 @@ def vendor_figure():
 
 
 def alias_figure():
-    raw = S.extract_waveforms(EXAMPLES["alias"], {"aliasing": {"correct": False}})
-    res = S.extract_waveforms(EXAMPLES["alias"])
+    raw = extract_waveforms(EXAMPLES["alias"], {"aliasing": {"correct": False}})
+    res = extract_waveforms(EXAMPLES["alias"])
     fig, ax = plt.subplots(1, 2, figsize=(6.6, 2.9), sharey=False)
     show_display(ax[0], raw)
     envelopes(ax[0], raw, means=False)
     ax[0].set_title("(a) as displayed: flow wraps around\n(first DP pass; aliasing suspected)")
     show_display(ax[1], res)
     envelopes(ax[1], res, means=False)
-    for v in res.spectrogram.display_v_limits:
+    for v in spectrogram(res).display_v_limits:
         ax[1].axhline(v, color="w", ls="--", lw=0.7)
     ax[1].set_title("(b) after automatic per-column baseline shift\n(dashed: display limits)")
     ax[1].set_ylabel("")
@@ -170,18 +192,14 @@ def dp_steps_figure():
 
     case = generate(SyntheticSpec(waveform="pos_neg", modality="PW", snr_db=10.0, seed=3, clicks=False,
                                   mirror_db=0.0, clutter_db=6.0))
-    im = case.image
-    img = S.DicomImage(path="synthetic", pixels=im.pixels, meta={},
-                       regions=[S.Region(x0=r.x0, y0=r.y0, x1=r.x1, y1=r.y1, dx=r.dx, dy=r.dy, units_x=r.units_x,
-                                         units_y=r.units_y, data_type=r.data_type, ref_y0=r.ref_y0)
-                                for r in im.regions])
-    cfg = S.Config()
-    res = S.extract_waveforms(img, cfg)
-    spec = res.spectrogram
-    ns = S.noise_stats(spec, cfg.likelihood)
-    memb = S.membership(spec.level, ns)
+    img = case.image
+    cfg = load_config()
+    res = extract_waveforms(img, cfg)
+    spec = spectrogram(res)
+    ns = noise_stats(spec, cfg.likelihood)
+    memb = membership(spec.level, ns)
     memb[:, spec.sweep] = 0
-    dens = S.signal_density(spec, ns, cfg.likelihood, cfg.dp)
+    dens = signal_density(spec, ns, cfg.likelihood, cfg.dp)
     o = spec.order
     t = res.t
     v_top = (0 - spec.zero_row) * spec.dy
@@ -211,10 +229,10 @@ def dp_steps_figure():
     # one column: density profile and edge cost on the positive side
     c = int(np.nanargmax(truth["v_max"]))
     craw = o[c]
-    sv = S.side_view(spec, "pos", image=dens)
+    sv = side_view(spec, "pos", image=dens)
     H = spec.display_height
     wall = int(round(cfg.dp.wall_band_rel * H))
-    cost = S.edge_cost(sv.level, cfg.dp.edge_density, max(1, int(round(cfg.dp.inner_band_rel * H))),
+    cost = edge_cost(sv.level, cfg.dp.edge_density, max(1, int(round(cfg.dp.inner_band_rel * H))),
                        cfg.dp.height_prior, wall)
     v = np.arange(sv.depth) * sv.speed_per_row
     ax = fig.add_subplot(gs[1:, 1])
@@ -241,7 +259,7 @@ def dp_steps_figure():
 def params_figure():
     """Effect of the two main DP parameters on one PW beat."""
     f = EXAMPLES["pw"]
-    base = S.extract_waveforms(f)
+    base = extract_waveforms(f)
     tr = base.t_rpeaks
     t0, t1 = (tr[0], tr[1]) if len(tr) >= 2 else (base.t[0], base.t[-1])
     fig, ax = plt.subplots(1, 2, figsize=(6.6, 2.6), sharey=True)
@@ -249,7 +267,7 @@ def params_figure():
                               (ax[1], "reference_accel_cm_s2", (160.0, 640.0, 2560.0), r"$a_{ref}$ =")]:
         show_display(a, base)
         for val, col in zip(vals, ("#00e676", C_MAX, "#ff9100")):
-            r = S.extract_waveforms(f, {"dp": {key: val}})
+            r = extract_waveforms(f, {"dp": {key: val}})
             a.plot(r.t, r.v_max, color=col, lw=0.9, label=f"{lab} {val:g}")
         a.set_xlim(t0, t1)
         a.set_ylim(-10, None)

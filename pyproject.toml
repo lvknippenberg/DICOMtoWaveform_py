@@ -11,14 +11,15 @@ dependencies = [
     "numpy>=1.24",
     "scipy>=1.10",
     "pydicom>=2.4",
-    "scikit-image>=0.21",
-    "matplotlib>=3.7",
     "pyyaml>=6",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7"]
-bench = ["pandas>=2", "tabulate>=0.9"]
+# QC figures (plot_result, plot_overlay)
+plot = ["matplotlib>=3.7"]
+# benchmark estimators (envelope.segmentation needs scikit-image) and reports
+bench = ["scikit-image>=0.21", "pandas>=2", "tabulate>=0.9", "matplotlib>=3.7"]
+dev = ["pytest>=7", "scikit-image>=0.21", "matplotlib>=3.7"]
 
 [tool.setuptools.packages.find]
 include = ["dicom2waveform*"]

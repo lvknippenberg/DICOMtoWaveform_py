@@ -2601,10 +2601,25 @@ def normalise_brightness(spec, target: float = 0.5, white_percentile: float = 99
     return np.clip(np.round(new), 0, 255).astype(np.uint8)
 
 
+# (colour, line style, line width) of each signal in plot_overlay. Positive side warm, negative
+# side cool; edges solid, means dashed. None of the colours is green or yellow, the usual
+# colours of the scanner's own ECG trace, so the extracted ECG stays distinguishable from it.
+OVERLAY_STYLE = {
+    "v_max": ("#ff3b30", "-", 2.0),
+    "v_mean_pos": ("#ff9f0a", "--", 1.6),
+    "v_min": ("#0a84ff", "-", 2.0),
+    "v_mean_neg": ("#64d2ff", "--", 1.6),
+    "ecg": ("#ff2bd6", "-", 1.8),
+    "rpeak": ("#d0d0d0", ":", 1.2),
+    "avc": ("white", "--", 1.8),
+}
+
+
 def plot_overlay(res: WaveformResult, image, path: str | Path | None = None, title: str = "",
                  target_width: int = 2000, show_avc_on_tdi: bool = False, normalised_panel: bool = True):
     """Full DICOM frame with the outputs drawn on top, for clinical review:
-    v_max / v_min, the extracted ECG trace, R-peaks, valve clicks and AVC.
+    v_max / v_min, the side means v_mean_pos / v_mean_neg (dashed), the extracted ECG trace,
+    R-peaks, valve clicks and AVC (colours: OVERLAY_STYLE).
 
     Shows the whole frame, including burned-in patient details: for use within
     the institution only, never commit the figures. Requires a result computed
@@ -2666,22 +2681,37 @@ def plot_overlay(res: WaveformResult, image, path: str | Path | None = None, tit
         axp.text(0.005, 0.99, "spectrum with normalised brightness (display only)", transform=axp.transAxes,
                  color="white", fontsize=9, va="top", bbox=dict(facecolor="black", alpha=0.6, lw=0))
     show_avc = spec.modality != "TDI" or show_avc_on_tdi
+    from matplotlib import patheffects
+
+    def outlined(lw):
+        # a black outline keeps every line visible on black, grey, white and copper displays
+        return [patheffects.Stroke(linewidth=lw + 2.2, foreground="black"), patheffects.Normal()]
+
+    def no_flow_hidden(v):
+        # side means are 0 where that side has no flow; do not draw them along the baseline
+        v = np.asarray(v, float).copy()
+        v[v == 0] = np.nan
+        return v
 
     def draw(a):
-        lw = 1.0
-        a.plot(x, rows(res.v_max), color="#ffd400", lw=lw)
-        a.plot(x, rows(res.v_min), color="#ff3cff", lw=lw)
+        for v, (col, ls, lw) in ((res.v_max, OVERLAY_STYLE["v_max"]), (res.v_min, OVERLAY_STYLE["v_min"]),
+                                 (no_flow_hidden(res.v_mean_pos), OVERLAY_STYLE["v_mean_pos"]),
+                                 (no_flow_hidden(res.v_mean_neg), OVERLAY_STYLE["v_mean_neg"])):
+            a.plot(x, rows(v), color=col, ls=ls, lw=lw, path_effects=outlined(lw))
         if trace.found:
             r = trace.row.astype(float).copy()
             r[spec.sweep] = np.nan
-            a.plot(x, r, color="red", lw=lw)
+            col, ls, lw = OVERLAY_STYLE["ecg"]
+            a.plot(x, r, color=col, ls=ls, lw=lw, path_effects=outlined(lw))
+        col, ls, lw = OVERLAY_STYLE["rpeak"]
         for xr in (columns(res.t_rpeaks) if len(res.t_rpeaks) else []):
-            a.plot([xr, xr], [ecg_top, reg.y1], color="white", lw=0.8, ls=":")
+            a.plot([xr, xr], [ecg_top, reg.y1], color=col, lw=lw, ls=ls, path_effects=outlined(lw))
         if show_avc:
+            col, ls, lw = OVERLAY_STYLE["avc"]
             for xa in (columns(res.t_avc) if len(res.t_avc) else []):
-                a.plot([xa, xa], [reg.y0, reg.y1], color="#00e5ff", lw=1.0, ls="--")
+                a.plot([xa, xa], [reg.y0, reg.y1], color=col, lw=lw, ls=ls, path_effects=outlined(lw))
         for xc in (columns(res.t_clicks) if len(res.t_clicks) else []):
-            a.plot([xc], [reg.y1 + 6], marker="^", color="white", ms=6, mec="black", mew=0.5)
+            a.plot([xc], [reg.y1 + 6], marker="^", color="white", ms=7, mec="black", mew=0.8)
 
     draw(ax)
     if panel is not None:
@@ -2692,12 +2722,13 @@ def plot_overlay(res: WaveformResult, image, path: str | Path | None = None, tit
     if panel is not None:
         axp.set_xlim(-0.5, Wimg - 0.5)
         axp.set_ylim(r1 - 0.5, r0 - 0.5)
-    handles = [Line2D([], [], color="#ffd400", label="v_max"), Line2D([], [], color="#ff3cff", label="v_min"),
-               Line2D([], [], color="red", label="ECG (extracted)"),
-               Line2D([], [], color="white", ls=":", label="R-peak"),
-               Line2D([], [], color="white", marker="^", ls="", label="valve click")]
+    labels = {"v_max": "v_max", "v_min": "v_min", "v_mean_pos": "mean (pos)", "v_mean_neg": "mean (neg)",
+              "ecg": "ECG (extracted)", "rpeak": "R-peak"}
     if show_avc:
-        handles.append(Line2D([], [], color="#00e5ff", ls="--", label="AVC"))
+        labels["avc"] = "AVC"
+    handles = [Line2D([], [], color=OVERLAY_STYLE[k][0], ls=OVERLAY_STYLE[k][1], lw=OVERLAY_STYLE[k][2], label=lab,
+                      path_effects=outlined(OVERLAY_STYLE[k][2])) for k, lab in labels.items()]
+    handles.append(Line2D([], [], color="white", marker="^", ls="", mec="black", label="valve click"))
     ax.legend(handles=handles, loc="lower left", fontsize=9, framealpha=0.7, facecolor="black",
               labelcolor="white", ncol=len(handles))
     if title:

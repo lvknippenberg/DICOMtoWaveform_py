@@ -1,8 +1,10 @@
 # DICOMtoWaveform_py — working notes / handoff
 
-State as of **2026-10-05** (session 1 on 2026-09-29, plus a second round on user feedback, "Round 2"
+State as of **2026-10-15** (session 1 on 2026-09-29, plus a second round on user feedback, "Round 2"
 in `docs/BENCHMARK.md`; session 2 on 2026-10-05: target feature list, click mode, review images; see
-"Target features" below). Read this first in a new session, then `docs/BENCHMARK.md`.
+"Target features" below; 2026-10-13/15: standalone script (now generated from the package), methods report,
+external validation, tutorial explainer `docs/explainer/`, parameter and smoothness sweeps, decisions 14-17).
+Read this first in a new session, then `docs/BENCHMARK.md`.
 
 ## Purpose
 
@@ -132,7 +134,10 @@ dicom2waveform/
                    runners for synthetic / vendor-trace / real)
 scripts/           run_examples, benchmark_synthetic, benchmark_vendor, benchmark_real, benchmark_avc,
                    make_report, failure_gallery, overlay_review,
-                   build_standalone (writes standalone/ from the package; --check)
+                   build_standalone (writes standalone/ from the package; --check),
+                   parameter_sensitivity, smoothness_accuracy (aggregate sweeps),
+                   standalone_overlays, standalone_poi_overlay, smoothness_sweep (run the standalone
+                   script on a DICOM folder; PHI outputs outside the repo)
 scripts/external_validation/  EchoNet-Measurements and EchoXFlow validation (docs/VALIDATION.md); absolute paths
                    to the working folder and external data
 standalone/        GENERATED (scripts/build_standalone.py, 2026-10-15): single-file script = the package's
@@ -224,6 +229,12 @@ New in this port:
     zeroed genuine slow flow (TDI 1.3-2.5 cm/s in 10-22 % of columns, CW up to 45 cm/s between jets, PW tails) and
     moved the TDI a' onset 4-21 ms later (error vs the user's 5 marks 6 -> 14 ms). A band in cm/s is worse (TDI
     needs <= ~1 cm/s, PW clutter ~12). Sweep with the new default: `C:\Claude\Doppler\results\sensitivity_floor01`.
+17. **Smoothness `dp.reference_accel_cm_s2` stays 640** (2026-10-15; user agreed). Sweep a0 = 40-1280
+    (`scripts/smoothness_sweep.py` images, `scripts/smoothness_accuracy.py` scores; explainer Table `tab:smooth`;
+    results in `C:\Claude\Doppler\results\stand-alone-smoothness-sweep`). Smoother looks cleaner (a0 160-320 removes
+    click spikes and baseline blips) but is not more accurate: a0 80 cuts peaks by 10-12 cm/s, 40 by 20-26 cm/s
+    (TDI e'/a' almost vanish); 320 is a tie (synthetic 1.44 vs 1.46 %, <= 3 dB 3.66 vs 3.75 %, vendor 1.98 vs
+    1.92 cm/s, positive peak |error| 8.6 vs 7.3 cm/s). To suppress click spikes, use `render.click_mode: bridge`.
 
 ## Tried and rejected
 
@@ -234,6 +245,8 @@ New in this port:
 - DP theta 0.2 as default: best on synthetic truth before normalisation, but +3..11 cm/s against
   vendor traces.
 - Second-order (curvature) DP term (Plan section 20): squares the state space; not implemented.
+- Stronger smoothness as default (a0 < 640): cleaner-looking but cuts peaks (decision 17).
+- Wall band 6 % as default: erases genuine slow flow on real images (decision 16).
 
 ## Benchmark results (2026-09-29; details in docs/results/REPORT.md)
 
@@ -330,4 +343,11 @@ $PY scripts/make_report.py C:/Claude/Doppler/results   # regenerates REPORT.md (
 $PY scripts/failure_gallery.py C:/Claude/Doppler/results --n 20
 $PY scripts/overlay_review.py "<dicom_dir>" C:/Claude/Doppler/review/overlay   # full-frame review images + brightness-normalised spectrum panel (PHI: institution only)
 $PY scripts/build_standalone.py   # regenerate standalone/ (script + commented YAML) after ANY package change (tests check it)
+$PY scripts/parameter_sensitivity.py C:/Claude/Doppler/results/sensitivity   # one-at-a-time sweep (explainer Section 12)
+# with the generated standalone script (outputs contain PHI: outside the repo, institution only)
+SA=standalone/dicom2waveform_standalone.py; EX="C:/DICOM waveforms/DICOM doppler examples/DICOM doppler examples"
+$PY scripts/standalone_overlays.py $SA "$EX" C:/Claude/Doppler/results/stand-alone            # overlays, CSV, events, summary.csv
+$PY scripts/standalone_poi_overlay.py $SA "$EX" "$EX/Points of interest" C:/Claude/Doppler/results/stand-alone-overlay   # + user's marks, poi_marks.csv
+$PY scripts/smoothness_sweep.py $SA "$EX" C:/Claude/Doppler/results/stand-alone-smoothness-sweep   # a0 = 40..1280 per file
+$PY scripts/smoothness_accuracy.py C:/Claude/Doppler/results/stand-alone-smoothness-sweep        # synthetic + vendor scores per a0
 ```

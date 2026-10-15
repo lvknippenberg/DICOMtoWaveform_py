@@ -1027,6 +1027,36 @@ displays. Much larger changes do matter (Figure~\ref{fig:lambda}): far lower cli
 columns jump to noise. Switching the range scaling off hurts TDI most (1.20 vs 0.76\,\%), because TDI's small velocity
 range then makes the prior far too stiff.
 
+\textbf{Does more smoothness give a better envelope?} A smoother envelope \emph{looks} better, so this was tested
+with a wider sweep (Table~\ref{tab:smooth}). Down to $a_0 = 160$--320 the extra smoothing removes narrow spikes on the
+real images (valve clicks, short blips near the baseline) without losing the peaks. Below that the L1 prior turns
+the envelope into flat steps and cuts real peaks: the peak velocity reads 10--12~cm/s low at $a_0 = 80$ and 20--26~cm/s
+low at 40, where the e$'$ and a$'$ waves of tissue Doppler almost disappear. No level is clearly better than the
+default: $a_0 = 320$ is a tie (slightly better on synthetic data at low SNR, slightly worse against the scanner's
+traces and on positive peaks), so 640 stays. To suppress valve-click spikes specifically, \code{render.click\_mode:
+bridge} is the targeted tool; it interpolates over click columns only instead of smoothing everything.
+
+\begin{table}[!htbp]
+\centering\small
+\caption{Smoothness sweep: lower $a_0$ = smoother envelope. Synthetic: median error in \% of the display span (all
+224 displays and SNR $\le$ 3~dB); peak bias: median error of the per-beat peak velocity of $\vmax$ and $\vmin$
+(negative = peaks cut); vendor: mean absolute error against the scanner's trace (5 vascular images); roughness: total
+variation of the envelopes on the 17 recent real cardiac examples (CW / PW / TDI, cm/s per s).}
+\label{tab:smooth}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}rrrrrr@{}}
+\toprule
+$a_0$ (cm/s$^2$) & synth.\ all & synth.\ $\le$3~dB & peak bias (cm/s) & vendor (cm/s) & roughness \\ \midrule
+40 & 3.35 & 4.96 & $-20$ / $-26$ & 3.42 & 172 / 115 / 13 \\
+80 & 2.01 & 4.36 & $-10$ / $-12$ & 2.42 & 215 / 150 / 21 \\
+160 & 1.58 & 4.21 & $-1.5$ / $-0.5$ & 2.10 & 274 / 198 / 29 \\
+320 & 1.44 & 3.66 & 0.0 / 0.0 & 1.98 & 343 / 244 / 40 \\
+\textbf{640} (default) & 1.46 & 3.75 & $+0.2$ / $+0.2$ & \textbf{1.92} & 416 / 287 / 47 \\
+1280 & 1.53 & 4.06 & $+0.8$ / $+1.4$ & 2.01 & 478 / 331 / 54 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \subsection{Aliasing}
 All aliasing settings are a-priori defaults except $\kappa$ (Section~\ref{sec:alias}). Within half to double, they change
 nothing on the 44 real images ($\le$0.01~cm/s) and nothing outside the aliasing cases. On the synthetic aliasing cases

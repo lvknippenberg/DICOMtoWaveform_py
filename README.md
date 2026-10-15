@@ -115,11 +115,21 @@ clinical context. Not all are implemented yet.
 python scripts/overlay_review.py <dicom_dir> <out_dir>
 ```
 
-One PNG per DICOM: the full frame as displayed with `v_max` / `v_min`, the extracted ECG, R-peaks,
-valve clicks and aortic valve closure drawn on top, and below it a column-aligned copy of the ECG and
+One PNG per DICOM: the full frame as displayed with `v_max` / `v_min` (solid red / blue), the side means
+`v_mean_pos` / `v_mean_neg` (dashed), the extracted ECG (magenta), R-peaks, valve clicks and aortic valve
+closure drawn on top with black-outlined lines, and below it a column-aligned copy of the ECG and
 spectrum strip with brightness normalised for visibility (display only; TDI redrawn with a copper map)
-and the same overlay (`dicom2waveform.plot.plot_overlay`). These images show patient details: keep them
-inside the institution.
+and the same overlay (`dicom2waveform.plot.plot_overlay`; colours in `OVERLAY_STYLE`). These images show
+patient details: keep them inside the institution.
+
+The same with the generated standalone script, plus CSV / events / a summary table per folder, the
+user's manual marks, and a smoothness sweep (see HANDOFF.md, "How to reproduce everything"):
+
+```bash
+python scripts/standalone_overlays.py standalone/dicom2waveform_standalone.py <dicom_dir> <out_dir>
+python scripts/standalone_poi_overlay.py standalone/dicom2waveform_standalone.py <dicom_dir> <poi_dir> <out_dir>
+python scripts/smoothness_sweep.py standalone/dicom2waveform_standalone.py <dicom_dir> <out_dir>
+```
 
 ## Development
 

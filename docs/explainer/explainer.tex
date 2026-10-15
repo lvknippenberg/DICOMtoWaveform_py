@@ -479,9 +479,9 @@ Two corrections turn $\tilde d$ into the \emph{density} $d$ used by the cost. Wi
 over all valid pixels,
 \begin{align}
 d' &= \mathrm{clip}\!\left(\frac{\tilde d - d_{\mathrm{bg}}}{1-d_{\mathrm{bg}}},\, 0,\, 1\right), \quad d_{\mathrm{bg}} = Q_{50}(\tilde d)\quad(\text{applied if } d_{\mathrm{bg}}<0.9),\\
-d  &= \mathrm{clip}\!\left(\frac{d'}{\max(Q_{99}(d'),\ 0.2)},\, 0,\, 1\right),
+d  &= \mathrm{clip}\!\left(\frac{d'}{\max(Q_{99}(d'),\ 0.1)},\, 0,\, 1\right),
 \end{align}
-where $d_{\mathrm{bg}}$ is the background density, $d'$ the background-subtracted density, and 0.2 a floor that stops
+where $d_{\mathrm{bg}}$ is the background density, $d'$ the background-subtracted density, and 0.1 a floor that stops
 a nearly empty image from being blown up.
 \begin{itemize}
 \item \textbf{Background subtraction.} The median density is the typical density of the background. Subtracting it
@@ -841,11 +841,12 @@ what happens when it is changed. All are documented in the package file \code{co
 
 \subsection{Three kinds of parameters}
 \begin{description}[leftmargin=1em]
-\item[Fitted to data (2).] The edge level $\theta = 0.5$ was chosen by leave-one-image-out on the five vascular images
+\item[Fitted to data (3).] The edge level $\theta = 0.5$ was chosen by leave-one-image-out on the five vascular images
 with the scanner's own envelope trace: in each fold the value with the lowest error on the other four images was
 taken, and 0.5 won in 3 of 5 folds (0.6 in the other 2; held-out error 2.16~cm/s). The normalisation percentile (99)
 was chosen on the synthetic development split together with the vendor images: it left the vendor result unchanged
-and removed a failure on sparse TDI bands.
+and removed a failure on sparse TDI bands. The normalisation floor (0.1) was chosen on the development split and
+confirmed on the held-out split after the sensitivity sweep below (it was 0.2).
 \item[Measured on example images (about 10).] These were set by looking at what a quantity measures on the real
 examples and putting the threshold between the populations. Examples: the noise margin $M$ and the factors $\beta$
 and $\gamma$ (first MATLAB version, on the 15-image tuning set and the vendor images), the density window, the
@@ -854,7 +855,7 @@ measured at 0.2--0.35 of the band density), the click threshold (visible clicks 
 transients 6--11), the AVC window (closure 341--377~ms after R, mitral closure 14--84~ms), the QRS band (see below)
 and $\kappa$ (Section~\ref{sec:alias}).
 \item[A-priori defaults (the rest).] Chosen by reasoning and never tuned: the inner band $h$, the height prior $\rho$,
-the wall band, the background percentile (the median), the normalisation floor, most aliasing settings, the assumed
+the wall band (checked on real slow flow after the sweep), the background percentile (the median), most aliasing settings, the assumed
 dynamic range. The rendering settings (colour tolerances, text size, baseline search) describe how Philips scanners
 draw overlays; they decide what is masked, not where the edge is, and are not discussed further.
 \end{description}
@@ -875,7 +876,7 @@ many R-peaks and aortic valve closures change, and whether the heart rate still 
 (it does within 1~bpm in 11 of 11 files with the defaults).
 \end{itemize}
 Table~\ref{tab:sens} has the numbers for the envelope; Figure~\ref{fig:paramfx} shows the main ones on one beat.
-Defaults: synthetic 1.46\,\% (4.18\,\% at $\le$3~dB, 0.76\,\% on TDI), vendor 1.92~cm/s.
+Defaults: synthetic 1.46\,\% (3.75\,\% at $\le$3~dB, 0.76\,\% on TDI), vendor 1.92~cm/s.
 
 \begin{small}
 \setlength{\tabcolsep}{3.5pt}
@@ -883,7 +884,8 @@ Defaults: synthetic 1.46\,\% (4.18\,\% at $\le$3~dB, 0.76\,\% on TDI), vendor 1.
 \caption{One-at-a-time sensitivity of the envelope parameters. Synthetic columns: median error in \% of the display
 span (lower is better). Vendor: mean absolute error in cm/s (lower is better). Real: mean $|$change$|$ of
 $\vmax$/$\vmin$ against the default on 44 cardiac images, cm/s (maximum over images in brackets where large). Bold:
-better than the default by a clear margin.}\label{tab:sens}\\
+better than the default by a clear margin. $^{*}$Not adopted: the gain comes from simulated wall clutter, and on real
+images it removes genuine slow flow (Section~\ref{sec:params}, wall band).}\label{tab:sens}\\
 \toprule
 Parameter (default) & value & synth. all & synth. $\le$3~dB & synth. TDI & vendor & real change \\ \midrule
 \endfirsthead
@@ -892,36 +894,36 @@ Parameter (default) & value & synth. all & synth. $\le$3~dB & synth. TDI & vendo
 \endhead
 \bottomrule
 \endfoot
-\emph{defaults} & & 1.46 & 4.18 & 0.76 & 1.92 & 0 \\ \midrule
-noise margin $M$ (32) & 16 & 1.48 & 3.99 & 0.79 & 2.39 & 0.4 (4) \\
- & 64 & 1.54 & 4.53 & 0.75 & 1.97 & 2.4 (12) \\
-noise-spread factor $\beta$ (4) & 2 & 1.46 & 4.18 & 0.76 & 2.05 & 1.4 (12) \\
- & 8 & 1.46 & 4.18 & 0.76 & 1.90 & 2.8 (20) \\
-soft-start factor $\gamma$ (1.5) & 0.5 & 1.46 & 4.31 & 0.76 & 1.97 & 2.8 (23) \\
- & 3 & 1.48 & 4.18 & 0.76 & 1.82 & 6.0 (50) \\
-density window (9$\times$5 px) & 5$\times$3 & 1.56 & 4.65 & 0.87 & 1.97 & 1.2 \\
- & 15$\times$9 & 1.57 & 4.56 & 0.99 & 1.95 & 1.5 \\
-background percentile (50) & off & 1.76 & 5.09 & 1.60 & 2.08 & 0.05 \\
- & 25 & 1.46 & 4.60 & 0.82 & 2.06 & 0.05 \\
- & 75 & 1.64 & 4.41 & 0.96 & 2.50 & 4.1 (11) \\
+\emph{defaults} & & 1.46 & 3.75 & 0.76 & 1.92 & 0 \\ \midrule
+noise margin $M$ (32) & 16 & 1.44 & 3.84 & 0.79 & 2.39 & 0.4 (4) \\
+ & 64 & 1.53 & 4.09 & 0.75 & 1.97 & 2.4 (12) \\
+noise-spread factor $\beta$ (4) & 2 & 1.46 & 3.75 & 0.76 & 2.05 & 1.4 (12) \\
+ & 8 & 1.46 & 3.75 & 0.76 & 1.90 & 2.8 (20) \\
+soft-start factor $\gamma$ (1.5) & 0.5 & 1.46 & 3.75 & 0.76 & 1.97 & 2.8 (23) \\
+ & 3 & 1.46 & 3.80 & 0.76 & 1.82 & 6.0 (50) \\
+density window (9$\times$5 px) & 5$\times$3 & 1.56 & 4.33 & 0.87 & 1.97 & 1.2 \\
+ & 15$\times$9 & 1.48 & 3.55 & 0.99 & 1.95 & 1.5 \\
+background percentile (50) & off & 1.72 & 4.75 & 1.60 & 2.08 & 0.05 \\
+ & 25 & 1.46 & 3.79 & 0.82 & 2.06 & 0.05 \\
+ & 75 & 1.60 & 4.03 & 0.96 & 2.50 & 4.1 (11) \\
 normalisation percentile (99) & off & 2.94 & 5.25 & 2.02 & 1.92 & 0.00 \\
- & 95 & 1.70 & 5.24 & 1.11 & 1.92 & 0.04 \\
+ & 95 & 1.85 & 5.84 & 1.18 & 1.92 & 0.04 \\
  & 99.9 & 2.06 & 4.76 & 1.25 & 1.92 & 0.00 \\
-normalisation floor (0.2) & 0.1 & 1.46 & \textbf{3.75} & 0.76 & 1.92 & 0 \\
- & 0.4 & 1.56 & 4.76 & 0.76 & 1.92 & 0 \\
-TDI local normalisation ($\pm$10~ms) & off & 1.48 & 4.17 & 0.81 & 1.92 & 0.04 \\
- & $\pm$20~ms & 1.48 & 4.17 & 0.78 & 1.92 & 0.01 \\
-edge level $\theta$ (0.5) & 0.35 & 1.82 & 5.21 & 1.27 & 3.29 & 3.0 (8) \\
- & 0.65 & 2.02 & 4.49 & 1.46 & 2.07 & 2.8 (7) \\
-inner band $h$ (5\,\% of $H$) & 2.5\,\% & 1.43 & 4.68 & 0.69 & 1.92 & 0.2 \\
- & 10\,\% & 2.03 & 4.56 & 2.29 & 2.04 & 0.2 \\
-height prior $\rho$ (0.01) & 0.002 & 1.49 & 4.61 & 0.76 & 1.96 & 0.15 \\
- & 0.05 & 1.71 & 4.61 & 0.97 & 1.92 & 0.8 \\
-wall band (3\,\% of $H$) & off & 1.78 & 4.61 & 0.81 & 1.92 & 0.1 \\
- & 6\,\% & \textbf{1.39} & \textbf{3.93} & 0.84 & 1.94 & 1.1 (8) \\
-reference acceleration $a_0$ (640) & 320 & 1.45 & 4.29 & 0.78 & 1.98 & 0.5 \\
- & 1280 & 1.53 & 4.35 & 0.81 & 2.01 & 0.3 \\
-scale $a_{\mathrm{ref}}$ with display range (on) & off & 1.65 & 4.56 & 1.20 & 1.99 & 0.8 (4) \\
+normalisation floor (0.1) & 0.05 & 1.46 & 3.84 & 0.76 & 1.92 & 0 \\
+ & 0.2 (old default) & 1.46 & 4.18 & 0.76 & 1.92 & 0 \\
+TDI local normalisation ($\pm$10~ms) & off & 1.48 & 3.75 & 0.81 & 1.92 & 0.04 \\
+ & $\pm$20~ms & 1.48 & 3.75 & 0.78 & 1.92 & 0.01 \\
+edge level $\theta$ (0.5) & 0.35 & 1.76 & 5.57 & 1.27 & 3.29 & 3.0 (8) \\
+ & 0.65 & 1.97 & 4.32 & 1.46 & 2.07 & 2.8 (7) \\
+inner band $h$ (5\,\% of $H$) & 2.5\,\% & 1.42 & 4.22 & 0.69 & 1.92 & 0.2 \\
+ & 10\,\% & 2.01 & 4.46 & 2.29 & 2.04 & 0.2 \\
+height prior $\rho$ (0.01) & 0.002 & 1.49 & 4.00 & 0.76 & 1.96 & 0.15 \\
+ & 0.05 & 1.67 & 4.30 & 0.97 & 1.92 & 0.8 \\
+wall band (3\,\% of $H$) & off & 1.75 & 3.85 & 0.81 & 1.92 & 0.1 \\
+ & 6\,\%$^{*}$ & \textbf{1.38} & \textbf{3.46} & 0.84 & 1.94 & 1.1 (8) \\
+reference acceleration $a_0$ (640) & 320 & 1.44 & 3.66 & 0.78 & 1.98 & 0.5 \\
+ & 1280 & 1.53 & 4.06 & 0.81 & 2.01 & 0.3 \\
+scale $a_{\mathrm{ref}}$ with display range (on) & off & 1.62 & 4.16 & 1.20 & 1.99 & 0.8 (4) \\
 \end{longtable}
 \end{small}
 
@@ -962,19 +964,24 @@ and moves edges out by up to 23~cm/s.
 \textbf{Density window (9$\times$5 pixels).} Chosen in MATLAB as large enough to average over speckle and small enough
 to keep the boundary sharp. Smaller (5$\times$3) follows narrow, faint peak tips better: on PW mitral E/A peaks it
 reduced the error against our reader's marks from 2.8 to 1.9~cm/s, but it pushed CW envelopes further out and is
-worse on synthetic data at low SNR (4.65 vs 4.18\,\%). Larger (15$\times$9) is smoother and cuts tips. Both directions
+worse on synthetic data at low SNR (4.33 vs 3.75\,\%). Larger (15$\times$9) is smoother and cuts tips. Both directions
 change real envelopes by only 1--1.5~cm/s on average, so this is a matter of convention more than accuracy.
 
 \textbf{Background percentile (50).} The median is the natural ``typical background'' because most of the display is
-background. Without the subtraction, low SNR gets worse (5.09\,\%) and TDI fails more often (1.60\,\%); 25 is
+background. Without the subtraction, low SNR gets worse (4.75\,\%) and TDI fails more often (1.60\,\%); 25 is
 similar to the median; 75 subtracts part of the faint flow, so the edge moves in (vendor 2.50~cm/s, real images
 4~cm/s on average).
 
-\textbf{Normalisation percentile (99) and floor (0.2).} This is what lets one $\theta$ serve all renderings. Switching
+\textbf{Normalisation percentile (99) and floor (0.1).} This is what lets one $\theta$ serve all renderings. Switching
 it off doubles the synthetic error (2.94\,\%) and the TDI error; 95 and 99.9 are both worse than 99. On the real images
 it changes nothing (0.00~cm/s): their flow cores are already saturated, so the 99th percentile of the density is 1
-anyway. It matters for sparse, speckled renderings. The floor only matters on displays with almost no flow; 0.1 was
-better at low SNR (3.75 vs 4.18\,\%) and is a candidate default.
+anyway. It matters for sparse, speckled renderings. The floor only matters on displays with little flow, where the
+99th percentile stays low: in the suite 17 of 224 displays, all at $\le$3~dB. It was 0.2 (an a-priori value) until
+this sweep. 0.1 was better on the development split ($\le$3~dB: 4.35 vs 4.01\,\%; 7 displays changed, all for the
+better) and the held-out split confirmed it (4.07 vs 3.40\,\%; 9 of the 10 changed displays better, the median and
+the mean-velocity error unchanged), so 0.1 is now the default. It changes nothing on the real and vendor images, nor
+on displays of pure noise ($-20$ to $-3$~dB, where 0.05, 0.1 and 0.2 gave identical results). Going lower (0.05)
+brings nothing more (3.84\,\%).
 
 \textbf{TDI local normalisation ($\pm$10~ms, floor 0.15).} Measured on one TDI image where faint, slow segments are real
 signal at a fifth of the band density. Its effect is small on average (TDI 0.81 vs 0.76\,\% when off) but it decides
@@ -994,18 +1001,28 @@ worse on TDI (2.29\,\%): TDI bands are thin, and an edge that needs 10\,\% of th
 them.
 
 \textbf{Height prior $\rho$ (0.01).} Only a tie-breaker. Smaller makes no difference; five times larger pulls weak flow
-toward zero (synthetic 1.71\,\%).
+toward zero (synthetic 1.67\,\%).
 
 \textbf{Wall band (3\,\% of $H$).} Without it, clutter or a dark wall-filter gap next to the baseline decides the edge
-more often (1.78\,\%). Doubling it to 6\,\% was \emph{better} on synthetic data (1.39\,\%, failures 12 instead of
-19\,\%) with no loss on the vendor images, but it also hides genuine low-velocity flow below 6\,\% of the display
-(the real envelopes change by 1~cm/s on average, up to 8~cm/s). A candidate default, but it needs checking on slow
-flow such as TDI and venous signals first.
+more often (1.75\,\%). Doubling it to 6\,\% looks \emph{better} on synthetic data (1.38\,\%, failures 11 instead of
+18\,\%) with no loss on the vendor images, but the whole gain comes from PW and CW displays with strong simulated wall
+clutter (20~dB above the noise, about 15~cm/s wide: failures 46 $\to$ 13\,\%). Without clutter 6\,\% is slightly
+worse (1.30 $\to$ 1.38\,\%), CW gets worse (1.46 $\to$ 1.60\,\%), and on TDI the start of each wave is found later
+(median 6 $\to$ 20~ms). The real images show the same cost: on TDI an edge between 1.3 and 2.5~cm/s is reported as 0
+in 10--22\,\% of the columns, and the a$'$ onset moves 4--21~ms later, so its error against our reader's five onset
+marks grows from 6 to 14~ms on average; on CW, where 6\,\% is 28--45~cm/s, the slow flow between the jets is reported
+as no flow in up to a third of the columns, and on PW the slow tails of the waves get shorter. Peak velocities (e$'$,
+a$'$, E, A, CW jets) do not change. A band in cm/s instead of a fraction is no better: TDI tolerates at most about
+1~cm/s (2~cm/s already makes the a$'$ onset error 18~ms), while the simulated PW clutter needs about 12~cm/s, and the
+fraction of the display already follows the velocity scale the sonographer chose for the signal of interest (3\,\% is
+0.7--1.3~cm/s on TDI, 4--6~cm/s on PW, 6--22~cm/s on CW). A PW-only 6\,\% would keep the synthetic gain (failures
+12\,\%) without the TDI cost, but its only support is the simulated clutter and it shortens real PW tails. The default
+therefore stays at 3\,\%; a wider band can be set per run for recordings with heavy wall clutter.
 
 \subsection{Step 4: reference acceleration $a_0$ and range scaling}
 \textbf{$a_0 = 640$~cm/s$^2$} comes from MATLAB, set by eye; range scaling was added in the Python version because a
 fixed value clipped steep upstrokes on high-range displays. Halving or doubling it changes the result very little
-(synthetic 1.45 and 1.53\,\%, vendor 1.98 and 2.01~cm/s, real 0.3--0.5~cm/s): the data term dominates on clean
+(synthetic 1.44 and 1.53\,\%, vendor 1.98 and 2.01~cm/s, real 0.3--0.5~cm/s): the data term dominates on clean
 displays. Much larger changes do matter (Figure~\ref{fig:lambda}): far lower clips peaks, far higher lets single
 columns jump to noise. Switching the range scaling off hurts TDI most (1.20 vs 0.76\,\%), because TDI's small velocity
 range then makes the prior far too stiff.
@@ -1015,7 +1032,7 @@ All aliasing settings are a-priori defaults except $\kappa$ (Section~\ref{sec:al
 nothing on the 44 real images ($\le$0.01~cm/s) and nothing outside the aliasing cases. On the synthetic aliasing cases
 (default 0.93\,\%) the detection thresholds (2\,\% of the limit, 1\,\% of the columns) and the smoothing are
 insensitive. The cut is sensitive in one direction: a stronger pull to the display edge (\code{edge\_preference} 0.008:
-3.52\,\%), a stiffer cut ($\lambda_{\mathrm{cut}} = 0.1$: 1.77\,\%), a wider guard band (20\,\%: 1.27\,\%), switching off the
+3.46\,\%), a stiffer cut ($\lambda_{\mathrm{cut}} = 0.1$: 1.77\,\%), a wider guard band (20\,\%: 1.27\,\%), switching off the
 density-crossing term ($\kappa = 0$: 1.30\,\%) or a stricter acceptance (\code{min\_edge\_density} 0.1: 1.18\,\%) all
 leave some aliasing uncorrected. Weaker settings in the other direction made no difference, so the defaults sit at
 the safe end.
@@ -1054,8 +1071,9 @@ path), not by fine-tuned constants.
 \item A few settings carry real weight: the edge level $\theta$ (the convention) everywhere, and on displays with
 visible noise the soft-start factor $\gamma$, the noise-spread factor $\beta$ and the noise margin $M$. If the envelope has to match a particular reader or vendor, change
 $\theta$, and per measurement type rather than globally.
-\item Two changes looked better on synthetic data and are candidates after a check on real slow flow: a 6\,\% wall
-band and a normalisation floor of 0.1. Neither is the default yet.
+\item Two changes looked better on synthetic data. The normalisation floor of 0.1 was confirmed on the held-out
+split, changes nothing on real images, and is now the default. The 6\,\% wall band was not adopted: its gain comes
+from simulated wall clutter, and on real images it removes genuine slow flow and delays the TDI a$'$ onset.
 \item For timing, the defaults sit between two failure modes that were each observed (T-waves counted versus beats
 missed; speckle versus real clicks).
 \end{itemize}

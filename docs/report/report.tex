@@ -356,7 +356,7 @@ Key & Default & Meaning & Effect of increasing \\ \midrule
 \code{height\_prior} ($\rho$) & 0.01 & cost per row of edge height & weak flow more often reported as 0 \\
 \code{wall\_band\_rel} & 0.03 & wall-filter band near the baseline (fraction of height) & more low-velocity signal treated as clutter \\
 \code{background\_percentile} & 50 & density percentile subtracted as noise & more aggressive noise removal \\
-\code{normalise\_percentile}, \code{normalise\_floor} & 99, 0.2 & density mapped to 1 (typical in-flow) & -- \\
+\code{normalise\_percentile}, \code{normalise\_floor} & 99, 0.1 & density mapped to 1 (typical in-flow) & -- \\
 \code{local\_norm\_s}, \code{\_floor}, \code{\_modalities} & 0.01~s, 0.15, [TDI] & per-column local normalisation & keeps fainter segments \\
 \midrule
 \multicolumn{4}{@{}l}{\textit{section} \code{likelihood:}} \\

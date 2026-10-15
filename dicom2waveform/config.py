@@ -159,6 +159,8 @@ class DPConfig:
     height_prior: float = 0.01
     # Band next to the baseline (fraction of display height) treated as the wall-filter zone:
     # nearly free to include; an edge inside it is reported as 0 (no flow on that side).
+    # 6 % helped only synthetic PW wall clutter; on real images it zeroed slow flow (CW, PW tails)
+    # and moved the TDI a' onset 4-21 ms later (error vs the reader's marks 6 -> 14 ms), so 3 % stays.
     wall_band_rel: float = 0.03
     # Percentile of the density taken as the noise background and subtracted (null/0 = off).
     # Without it, uniform noise pulls the edge out to the display limit.
@@ -167,7 +169,10 @@ class DPConfig:
     # normalise_floor (null/0 = off). Lets one edge_density serve dense (CW, vascular) and
     # sparse (speckled TDI) renderings. Chosen on the synthetic dev split + vendor traces.
     normalise_percentile: float | None = 99.0
-    normalise_floor: float = 0.2
+    # Smallest divisor for that normalisation; matters only on displays with little flow (low SNR).
+    # 0.1 chosen on the synthetic dev split, confirmed on the held-out split (<= 3 dB: 4.1 -> 3.4 %
+    # of span); no change on real or vendor-traced images (was 0.2).
+    normalise_floor: float = 0.1
     # Local normalisation ("half maximum per column"): additionally divide each side's density by
     # its maximum within +-local_norm_s (s), but never by less than local_norm_floor. Keeps faint
     # low-velocity TDI segments (real signal at only 0.2-0.35 of the band density). On CW it

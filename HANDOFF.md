@@ -217,6 +217,14 @@ New in this port:
     A relative import inside a function must sit in `try: ... except ImportError` (the build script checks
     this), because the standalone script has no package to import from.
 
+16. **`dp.normalise_floor` 0.2 -> 0.1; `dp.wall_band_rel` stays 0.03** (2026-10-15, after the one-at-a-time sweep,
+    `scripts/parameter_sensitivity.py`, explainer Section 12). Floor: binds only on 17/224 synthetic displays (all
+    <= 3 dB); dev split <= 3 dB 4.35 -> 4.01 %, held-out 4.07 -> 3.40 %; no change on real, vendor or pure-noise
+    displays. Wall band 6 % rejected: its synthetic gain is only simulated PW/CW wall clutter; on real images it
+    zeroed genuine slow flow (TDI 1.3-2.5 cm/s in 10-22 % of columns, CW up to 45 cm/s between jets, PW tails) and
+    moved the TDI a' onset 4-21 ms later (error vs the user's 5 marks 6 -> 14 ms). A band in cm/s is worse (TDI
+    needs <= ~1 cm/s, PW clutter ~12). Sweep with the new default: `C:\Claude\Doppler\results\sensitivity_floor01`.
+
 ## Tried and rejected
 
 - Fixed 2% supra-Otsu gate, and a median-referenced gate for spectrum methods: too permissive on TDI

@@ -51,7 +51,7 @@ SWEEP = [
     ("dp", "wall_band_rel", [0.0, 0.06]),
     ("dp", "background_percentile", [0.0, 25.0, 75.0]),
     ("dp", "normalise_percentile", [0.0, 95.0, 99.9]),
-    ("dp", "normalise_floor", [0.1, 0.4]),
+    ("dp", "normalise_floor", [0.05, 0.2]),
     ("dp", "local_norm_s", [0.0, 0.02]),
     ("dp", "local_norm_floor", [0.075, 0.3]),
     ("aliasing", "alias_edge_fraction", [0.01, 0.04]),

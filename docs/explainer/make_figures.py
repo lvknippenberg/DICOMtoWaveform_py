@@ -616,6 +616,55 @@ def fig_clinician(case, res):
     save(fig, "clinician_steps.pdf")
 
 
+PARAM_PANELS = [  # (title, section, key, low, high)
+    (r"edge level $\theta$", "dp", "edge_density", 0.35, 0.65),
+    (r"density window", "likelihood", ("density_window_px_rows", "density_window_px_cols"),
+     (5, 3), (15, 9)),
+    (r"inner band $h$ (of $H$)", "dp", "inner_band_rel", 0.025, 0.1),
+    (r"height prior $\rho$", "dp", "height_prior", 0.002, 0.05),
+    (r"background pct.", "dp", "background_percentile", 0.0, 75.0),
+    (r"normalisation pct.", "dp", "normalise_percentile", 0.0, 99.9),
+    (r"wall band (of $H$)", "dp", "wall_band_rel", 0.0, 0.06),
+    (r"noise margin $M$", "likelihood", "noise_margin", 16.0, 64.0),
+]
+
+
+def fig_param_effects(case, img):
+    """Lower / default / higher value of the main envelope parameters on one synthetic beat."""
+    t0, t1 = 0.45, 1.25
+    base = extract_waveforms(img)
+    tr = case.truth
+
+    def err(r):
+        m = (base.t >= t0) & (base.t <= t1) & ~np.isnan(r.v_max) & ~np.isnan(tr["v_max"])
+        return np.mean(np.abs(np.r_[r.v_max[m] - tr["v_max"][m], r.v_min[m] - tr["v_min"][m]]))
+
+    def fmt(v):
+        return "x".join(str(x) for x in v) if isinstance(v, tuple) else f"{v:g}"
+
+    fig, axs = plt.subplots(2, 4, figsize=(6.8, 3.6), sharex=True, sharey=True)
+    for ax, (title, sec, key, lo, hi) in zip(axs.ravel(), PARAM_PANELS):
+        show(ax, base)
+        ax.plot(base.t, tr["v_max"], color=C_TRUE, ls="--", lw=0.6)
+        ax.plot(base.t, tr["v_min"], color=C_TRUE, ls="--", lw=0.6)
+        for val, col in ((lo, "#00e676"), (None, C_MAX), (hi, "#ff9100")):
+            if val is None:
+                r, lab = base, "default"
+            else:
+                ov = {sec: dict(zip(key, val))} if isinstance(key, tuple) else {sec: {key: val}}
+                r, lab = extract_waveforms(img, ov), fmt(val)
+            ax.plot(r.t, r.v_max, color=col, lw=0.8, label=f"{lab}: {err(r):.1f}")
+            ax.plot(r.t, r.v_min, color=col, lw=0.8)
+        ax.set_xlim(t0, t1)
+        ax.set_title(title, loc="left", fontsize=7.5)
+        ax.legend(loc="lower right", fontsize=5.5, framealpha=0.8, handlelength=1.0, borderpad=0.3)
+    for ax in axs[1]:
+        ax.set_xlabel("time (s)")
+    for ax in axs[:, 0]:
+        ax.set_ylabel("cm/s")
+    save(fig, "param_effects.pdf")
+
+
 if __name__ == "__main__":
     if "--preview" in sys.argv:
         PREVIEW = sys.argv[sys.argv.index("--preview") + 1]
@@ -633,6 +682,8 @@ if __name__ == "__main__":
     fig_column_cost()
     fig_dp_toy()
     fig_lambda(case, img)
+    case3, img3, _ = run_case(**{**MAIN, "snr_db": 3.0})
+    fig_param_effects(case3, img3)
     print("aliasing (true min, est min, flags):", fig_aliasing())
     fig_mean(case, res)
     r = fig_overview()

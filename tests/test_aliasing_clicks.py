@@ -63,6 +63,16 @@ def test_avc():
     assert res.v_max[i] > 0.5 * case.params.v_top
 
 
+@pytest.mark.parametrize("modality", ["PW", "TDI"])
+def test_avc_only_on_cw(modality):
+    # same synthetic clicks at closure, but on PW / TDI the AVC is not reported
+    case = generate(SyntheticSpec(waveform="systolic" if modality == "PW" else "tdi", modality=modality, snr_db=20,
+                                  seed=5, peak_velocity=60 if modality == "PW" else 10, clicks=True))
+    res = extract_waveforms(case.image)
+    assert res.flags["modality"] == modality and len(res.t_rpeaks) > 0
+    assert len(res.t_avc) == 0
+
+
 def test_removed_click_keys_are_ignored():
     with pytest.warns(UserWarning) as rec:
         cfg = load_config({"render": {"click_mode": "bridge", "click_min_snr": 12.0}})

@@ -422,7 +422,8 @@ tissue transients, and only the closure is used.
 
 \textbf{AVC} is the strongest click transient 0.20--0.50~s after each R-peak. It needs at least 6 robust SDs (the R-gating keeps
 speckle transients out), must lie at least 12~ms from the window edges, and is timed at the half-maximum centroid.
-Images without clicks correctly return no AVC.
+Images without clicks correctly return no AVC. The AVC is returned on CW recordings only (\code{ecg.avc\_modalities}):
+on PW and tissue Doppler the strongest transient in the window is not the closure.
 
 \subsection{Aliasing detection and correction (stages 8--9)}
 A PW spectrum is periodic in velocity with a period of the display span: flow beyond one limit re-enters at the other.

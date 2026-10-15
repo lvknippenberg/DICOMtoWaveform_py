@@ -816,6 +816,8 @@ than 35~ms. The result, in robust SDs, is the click strength per column. Click t
 a fixed threshold also passed speckle and tissue transients, and only the closure below is used.
 \item \textbf{Aortic valve closure (AVC)} (\code{aortic\_valve\_closure}): per beat, the strongest click transient
 0.20--0.50~s after the R-peak, at least 6 robust SDs, not at the window edges, timed at the half-maximum centroid.
+Only on CW recordings (through the aortic valve); on PW and tissue Doppler the strongest transient in that window is
+not the closure, so no AVC is returned there.
 \end{itemize}
 
 \begin{figure}[!htbp]

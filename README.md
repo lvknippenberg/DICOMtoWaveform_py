@@ -15,7 +15,7 @@ res.v_mean       # cm/s, intensity-weighted mean velocity inside the flow region
 res.v_mean_pos   # cm/s, same, positive half only
 res.v_mean_neg   # cm/s, same, negative half only
 res.t_rpeaks     # s, R-peak times
-res.t_avc        # s, aortic valve closure per beat (strongest click 0.2-0.5 s after R)
+res.t_avc        # s, aortic valve closure per beat, CW only (strongest click 0.2-0.5 s after R); empty on PW/TDI
 res.flags        # modality (PW/CW/TDI), aliasing_suspected/_corrected, ecg_clipped, snr_proxy_db, ...
 res.to_csv("out.csv")
 ```
@@ -46,7 +46,7 @@ python scripts/run_examples.py <dicom_dir> <out_dir>    # QC figures + CSVs for 
 4. **ECG** is traced from its rendered colour, per column; R-peaks from QRS-band energy (port of the MATLAB
    `DetectRpeaks.m`, with the DICOM `HeartRate` tag as a prior for search-back); aortic valve closure
    from the strongest valve-click transient in the 0.2-0.5 s window after each R-peak (port of the MATLAB
-   method; general valve-click times are not reported).
+   method; CW recordings only, `ecg.avc_modalities`; general valve-click times are not reported).
 5. **Envelopes (default: DP).** Noise-referenced soft signal membership -> local density ->
    background-corrected and normalised -> per side, the globally optimal outer edge by dynamic
    programming with a physiological acceleration prior. The edge sits at half the image's typical

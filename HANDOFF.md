@@ -253,7 +253,11 @@ New in this port:
     `keep_diagnostics` is now only for `plot_overlay` and internals. The ECG straddles the region's top edge in all
     17 examples (starts 10-48 px above it), so it used to be cut off; now the extracted ECG is drawn over the
     scanner's trace on the image panel, for checking the tracing. `plot_result` restyled: dark panels, `OVERLAY_STYLE` colours in every panel,
-    R-peak dots + quiet dotted guide, AVC dashed (hidden on TDI), one legend.
+    R-peak dots + quiet dotted guide, AVC dashed (CW only), one legend.
+20. **AVC on CW only** (2026-10-15, user, before sharing the standalone script). `t_avc` is empty unless the
+    modality is in `ecg.avc_modalities` (default `("CW",)`). On PW/TDI the strongest transient 0.2-0.5 s after R
+    is not the closure, yet 10 of the 17 examples (all PW/TDI) returned 1-5 "AVC" values each; CW results
+    unchanged. The plots show AVC only where it is detected (`show_avc_on_tdi` argument removed).
 
 ## Tried and rejected
 

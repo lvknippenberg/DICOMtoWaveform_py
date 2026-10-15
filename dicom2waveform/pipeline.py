@@ -201,7 +201,8 @@ def extract_waveforms(
         hr_hint = None
     t_r = detect_rpeaks(ecg[o], t, cfg.ecg, heart_rate_hint=hr_hint) if (trace.found and cfg.ecg.detect_rpeaks) else np.array([])
 
-    t_avc = aortic_valve_closure(spec, t, t_r, cfg.ecg) if cfg.ecg.detect_avc else np.array([])
+    avc = cfg.ecg.detect_avc and spec.modality in cfg.ecg.avc_modalities
+    t_avc = aortic_valve_closure(spec, t, t_r, cfg.ecg) if avc else np.array([])
 
     flow = flow_mask(spec, env["k_pos"], env["k_neg"])
     flags = {

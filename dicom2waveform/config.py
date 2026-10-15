@@ -72,8 +72,11 @@ class ECGConfig:
     max_gap_s: float = 0.05
     # Run the R-peak detector.
     detect_rpeaks: bool = True
-    # Detect the aortic valve closure (needs R-peaks).
+    # Detect the aortic valve closure (needs R-peaks), on these modalities only: the closing click
+    # is a valve signal, recorded with CW through the aortic valve. Elsewhere t_avc is empty (on
+    # PW/TDI the strongest transient in the window is not the closure).
     detect_avc: bool = True
+    avc_modalities: tuple[str, ...] = ("CW",)
     # Display only (WaveformResult.spectrum, plot_result): the rows of the frame above the spectral
     # region are included from strip_margin_px above the top of the traced ECG, so the burned-in
     # ECG can be compared with the extracted one; at most strip_max_frac of the region's height.

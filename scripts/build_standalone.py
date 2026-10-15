@@ -54,7 +54,7 @@ display as stored by the scanner, it returns on one shared time axis:
     v_mean_pos  cm/s, same, positive half only
     v_mean_neg  cm/s, same, negative half only
 
-plus event times t_rpeaks (R-peaks), t_avc (aortic valve closure)
+plus event times t_rpeaks (R-peaks), t_avc (aortic valve closure; CW only, empty on PW/TDI)
 and quality flags (modality, aliasing, ECG clipping, SNR proxy, ...).
 
 Velocities carry the sign of the DICOM header (PhysicalDeltaY): on a display the operator

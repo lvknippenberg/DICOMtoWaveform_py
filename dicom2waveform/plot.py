@@ -46,6 +46,12 @@ def _outlined(lw: float):
     return [patheffects.Stroke(linewidth=lw + 2.2, foreground="black"), patheffects.Normal()]
 
 
+def _avc_applies(res: WaveformResult) -> bool:
+    # AVC is only detected on some modalities (ecg.avc_modalities); elsewhere it is not shown at all
+    mods = res.meta.get("config", {}).get("ecg", {}).get("avc_modalities", ("CW",))
+    return res.flags.get("modality") in tuple(mods)
+
+
 def _no_flow_hidden(v):
     # side means are 0 where that side has no flow; do not draw them along the baseline
     v = np.asarray(v, float).copy()
@@ -55,7 +61,7 @@ def _no_flow_hidden(v):
 
 def plot_result(res: WaveformResult, path: str | Path | None = None, title: str = "",
                 extra: dict[str, tuple[np.ndarray, np.ndarray]] | None = None,
-                show_avc_on_tdi: bool = False, dpi: int = 130):
+                dpi: int = 130):
     """Analysed spectrum with the envelopes, the ECG with R-peaks and aortic valve closure (AVC),
     and the velocity signals, on one time axis. Colours: OVERLAY_STYLE.
 
@@ -63,7 +69,7 @@ def plot_result(res: WaveformResult, path: str | Path | None = None, title: str 
     spectral strip and the burned-in ECG just above it (with the extracted ECG drawn over it, to
     check the tracing), not the header area with patient details.
     extra: optional {label: (v_max, v_min)} (time order) overlaid for comparison.
-    AVC is hidden on TDI by default (no valve signal in tissue Doppler).
+    AVC is shown on the modalities where it is detected (CW by default).
     """
     import matplotlib
 
@@ -78,7 +84,7 @@ def plot_result(res: WaveformResult, path: str | Path | None = None, title: str 
     t = res.t
     dt = float(t[1] - t[0]) if len(t) > 1 else 1.0
     t_lim = (t[0] - dt / 2, t[-1] + dt / 2)
-    show_avc = f.get("modality") != "TDI" or show_avc_on_tdi
+    show_avc = _avc_applies(res)
 
     fig, ax = plt.subplots(3, 1, figsize=(13, 9.5), sharex=True, facecolor=th["figure"],
                            gridspec_kw=dict(height_ratios=[3, 1.1, 2], hspace=0.08))
@@ -235,7 +241,7 @@ def normalise_brightness(spec, target: float = 0.5, white_percentile: float = 99
 
 
 def plot_overlay(res: WaveformResult, image, path: str | Path | None = None, title: str = "",
-                 target_width: int = 2000, show_avc_on_tdi: bool = False, normalised_panel: bool = True):
+                 target_width: int = 2000, normalised_panel: bool = True):
     """Full DICOM frame with the outputs drawn on top, for clinical review:
     v_max / v_min, the side means v_mean_pos / v_mean_neg (dashed), the extracted ECG trace,
     R-peaks and AVC (colours: OVERLAY_STYLE).
@@ -243,7 +249,7 @@ def plot_overlay(res: WaveformResult, image, path: str | Path | None = None, tit
     Shows the whole frame, including burned-in patient details: for use within
     the institution only, never commit the figures. Requires a result computed
     with keep_diagnostics=True; `image` is the DicomImage it was computed from.
-    AVC is hidden on TDI by default (no valve signal in tissue Doppler).
+    AVC is shown on the modalities where it is detected (CW by default).
     The overlay is drawn on the frame as displayed (original brightness).
     normalised_panel: add a copy of the ECG + spectrum strip below the frame,
     column-aligned, with the spectrum brightness-normalised (normalise_brightness)
@@ -299,7 +305,7 @@ def plot_overlay(res: WaveformResult, image, path: str | Path | None = None, tit
         axp.axis("off")
         axp.text(0.005, 0.99, "spectrum with normalised brightness (display only)", transform=axp.transAxes,
                  color="white", fontsize=9, va="top", bbox=dict(facecolor="black", alpha=0.6, lw=0))
-    show_avc = spec.modality != "TDI" or show_avc_on_tdi
+    show_avc = _avc_applies(res)
     outlined, no_flow_hidden = _outlined, _no_flow_hidden
 
     def draw(a):
